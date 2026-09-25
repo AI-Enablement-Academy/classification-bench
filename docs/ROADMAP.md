@@ -15,7 +15,7 @@ Task contracts, matrix planning, request IDs, strict categorical evaluation, ful
 
 Add OpenRouter, supported subscription CLI adapters and native specialists incrementally. Carry exact routing and model controls, separate provider retries, and a shared authorized budget. An adapter must pass smoke inspection and identity checks before a full run.
 
-Start a frozen repeat study on a small, declared representative subset of existing model configurations. Use three fresh passes per prompt condition, or two additional passes only when the historical first pass is demonstrably comparable. Estimate costs before selecting the matrix. Existing model access and budget approval do not mean every matrix expansion is authorized.
+The case-study user has requested repeats for P0, P1 and P2. Keep each requested configuration/condition in an explicit coverage matrix, including blocked or unsupported entries. Use three fresh passes per condition, or two additional passes only when the historical first pass is demonstrably comparable. Estimate costs and admit execution against the existing case-study caps before launching. Prioritizing a wave must not silently remove remaining configurations from scope. This repository has no separate live spending authorization.
 
 ## Then: reusable task packs and reports
 
