@@ -1,6 +1,9 @@
 """Offline artifact verification around one-attempt ExecutionLedger records."""
 
 import json
+import os
+import re
+import stat
 from dataclasses import asdict
 from pathlib import Path
 
@@ -12,6 +15,12 @@ class VerifiedExecutionError(ValueError):
     pass
 
 
+_RECEIPT_KEYS = {"schema_version", "request_id", "attempt_id", "manifest_digest",
+                 "input_digest", "source_id", "response"}
+_SHARD = re.compile(r"[0-9a-f]{2}\Z")
+_OBJECT = re.compile(r"[0-9a-f]{64}\Z")
+
+
 def _text(value, name):
     if not isinstance(value, str) or not value or value != value.strip():
         raise VerifiedExecutionError(f"{name} must be a nonempty trimmed string")
@@ -20,6 +29,15 @@ def _text(value, name):
 def _json_bytes(record):
     return json.dumps(record, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise VerifiedExecutionError("receipt JSON has duplicate keys")
+        result[key] = value
+    return result
 
 
 class VerifiedExecution:
@@ -99,9 +117,8 @@ class VerifiedExecution:
             receipt = json.loads(read_artifact(self.artifact_root, receipt_ref))
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise VerifiedExecutionError("receipt is not UTF-8 JSON") from exc
-        expected_keys = {"schema_version", "request_id", "attempt_id",
-                         "manifest_digest", "input_digest", "source_id", "response"}
-        if not isinstance(receipt, dict) or set(receipt) != expected_keys or receipt["schema_version"] != 1:
+        if not isinstance(receipt, dict) or set(receipt) != _RECEIPT_KEYS or (
+                type(receipt["schema_version"]) is not int or receipt["schema_version"] != 1):
             raise VerifiedExecutionError("invalid response receipt schema")
         state = self.execution.get(request_id)
         row, entry = state["request"], state["execution"]
@@ -146,6 +163,89 @@ class VerifiedExecution:
                 return None
             return ArtifactRef(1, row["receipt_sha256"], row["receipt_size"],
                                row["receipt_media_type"], row["receipt_path"])
+
+    def discover_orphan_receipt(self, request_id, token, *, max_objects=10000):
+        """Scan private published objects, then index one verified matching receipt."""
+        _text(request_id, "request_id")
+        _text(token, "token")
+        if type(max_objects) is not int or max_objects < 1:
+            raise VerifiedExecutionError("max_objects must be a positive integer")
+        try:
+            store_mode = self.artifact_root.lstat().st_mode
+        except FileNotFoundError as exc:
+            raise VerifiedExecutionError("artifact store directory is missing") from exc
+        if not stat.S_ISDIR(store_mode):
+            raise VerifiedExecutionError("artifact store must be a real directory")
+        objects = self.artifact_root / "objects"
+        try:
+            root_mode = objects.lstat().st_mode
+        except FileNotFoundError as exc:
+            raise VerifiedExecutionError("artifact objects directory is missing") from exc
+        if not stat.S_ISDIR(root_mode):
+            raise VerifiedExecutionError("artifact objects directory is not a real directory")
+        matches = []
+        count = 0
+        with os.scandir(objects) as shards:
+            for shard in shards:
+                if not _SHARD.fullmatch(shard.name) or not stat.S_ISDIR(shard.stat(follow_symlinks=False).st_mode):
+                    raise VerifiedExecutionError("unexpected or symlinked artifact shard")
+                with os.scandir(shard.path) as files:
+                    for item in files:
+                        if item.name.startswith(".artifact-"):
+                            continue  # An unpublished temporary file is not evidence.
+                        mode = item.stat(follow_symlinks=False).st_mode
+                        if not _OBJECT.fullmatch(item.name) or not item.name.startswith(shard.name) or not stat.S_ISREG(mode):
+                            raise VerifiedExecutionError("unexpected or symlinked artifact object")
+                        count += 1
+                        if count > max_objects:
+                            raise VerifiedExecutionError("artifact discovery object cap exceeded")
+                        ref = ArtifactRef(1, item.name, item.stat(follow_symlinks=False).st_size,
+                                          "application/json", f"objects/{shard.name}/{item.name}")
+                        data = read_artifact(self.artifact_root, ref)
+                        try:
+                            record = json.loads(data)
+                        except (UnicodeError, json.JSONDecodeError):
+                            continue  # Raw binary or non-JSON provider output has no receipt marker.
+                        if not isinstance(record, dict):
+                            continue
+                        signals = len(set(record) & {"attempt_id", "manifest_digest", "input_digest", "source_id"})
+                        receipt_like = set(record) == _RECEIPT_KEYS or (
+                            record.get("request_id") == request_id and signals >= 2) or (
+                            record.get("request_id") == request_id and
+                            record.get("artifact_kind") == "verified_response_receipt")
+                        if not receipt_like:
+                            continue
+                        if set(record) != _RECEIPT_KEYS or type(record.get("schema_version")) is not int or record["schema_version"] != 1:
+                            raise VerifiedExecutionError("malformed or unsupported receipt-like artifact")
+                        try:
+                            json.loads(data, object_pairs_hook=_unique_pairs)
+                        except (UnicodeError, json.JSONDecodeError) as exc:
+                            raise VerifiedExecutionError("malformed receipt JSON") from exc
+                        if record["request_id"] == request_id:
+                            self._verify_receipt(request_id, token, ref)
+                            matches.append(ref)
+        indexed = self.receipt_for(request_id)
+        if len(matches) > 1:
+            raise VerifiedExecutionError("multiple conflicting attributable receipts; no receipt indexed")
+        if indexed is not None and (not matches or matches[0] != indexed):
+            raise VerifiedExecutionError("indexed receipt is missing or conflicts with discovered evidence")
+        if not matches:
+            return None
+        if indexed is None:
+            self._index_receipt(request_id, matches[0])
+        return matches[0]
+
+    def recover_discovered_response(self, request_id, token, *, max_objects=10000,
+                                    billing_reason=None, settlement_id=None, charge=None,
+                                    zero_charge_evidence=None):
+        """Discover one attributable receipt and finish recovery without a model call."""
+        receipt = self.discover_orphan_receipt(request_id, token, max_objects=max_objects)
+        if receipt is None:
+            raise VerifiedExecutionError("no attributable receipt found")
+        return self.recover_response(request_id, token, receipt_ref=receipt,
+                                     billing_reason=billing_reason,
+                                     settlement_id=settlement_id, charge=charge,
+                                     zero_charge_evidence=zero_charge_evidence)
 
     def record_unknown(self, request_id, token, evidence_id, billing_reason):
         """Record caller-observed uncertainty and retain the reservation as a hold."""

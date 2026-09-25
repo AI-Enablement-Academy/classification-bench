@@ -1,5 +1,6 @@
 import multiprocessing
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -26,6 +27,21 @@ def receipt_worker(database, store, source_id, start, results):
         results.put((source_id, saved["receipt_ref"].sha256))
     except VerifiedExecutionError as exc:
         results.put((source_id, str(exc)))
+
+
+def crash_before_receipt_index(database, store, token):
+    wrapper = VerifiedExecution(database, store)
+    wrapper._index_receipt = lambda request_id, receipt_ref: os._exit(77)
+    wrapper.save_response("request-1", token, RESPONSE, "application/json", "crash-observation")
+    os._exit(78)
+
+
+def discover_after_crash(database, store, token, results):
+    wrapper = VerifiedExecution(database, store)
+    recovered = wrapper.recover_discovered_response(
+        "request-1", token, billing_reason="usage not observed")
+    results.put((recovered["request"]["state"], recovered["budget"]["unknown_holds"],
+                 wrapper.receipt_for("request-1").sha256))
 
 
 class VerifiedExecutionTests(unittest.TestCase):
@@ -244,6 +260,108 @@ class VerifiedExecutionTests(unittest.TestCase):
             self.assertEqual(process.exitcode, 0)
         self.assertEqual(outcomes[0][1], outcomes[1][1])
         self.assertEqual(self.wrapper.receipt_for("request-1").sha256, outcomes[0][1])
+
+    def test_real_subprocess_crash_before_index_is_discovered_without_returned_ref(self):
+        claim, _ = self.claim_admit()
+        context = multiprocessing.get_context("spawn")
+        crashed = context.Process(target=crash_before_receipt_index,
+                                  args=(str(self.database), str(self.store), claim["token"]))
+        crashed.start()
+        crashed.join(timeout=20)
+        self.assertEqual(crashed.exitcode, 77)
+        self.assertIsNone(self.wrapper.receipt_for("request-1"))
+        results = context.Queue()
+        fresh = context.Process(target=discover_after_crash,
+                                args=(str(self.database), str(self.store), claim["token"], results))
+        fresh.start()
+        state, hold, receipt_digest = results.get(timeout=20)
+        fresh.join(timeout=20)
+        self.assertEqual(fresh.exitcode, 0)
+        self.assertEqual((state, hold), ("response_saved", 6))
+        self.assertEqual(self.wrapper.receipt_for("request-1").sha256, receipt_digest)
+        self.assertIsNone(self.wrapper.execution.claim("resend", 30))
+        again = self.wrapper.recover_discovered_response(
+            "request-1", claim["token"], billing_reason="usage not observed")
+        self.assertEqual(again["budget"]["unknown_holds"], 6)
+        self.assertEqual(sum(e["event_type"] == "response_saved" for e in
+                             self.wrapper.execution.coordinator.events("request-1")), 1)
+
+    def test_conflicting_orphan_receipts_fail_closed_and_keep_hold(self):
+        claim, _ = self.claim_admit()
+        self.wrapper.record_unknown("request-1", claim["token"], "timeout", "charge unknown")
+        original = self.wrapper._index_receipt
+
+        def skip_index(request_id, receipt_ref):
+            return None
+
+        self.wrapper._index_receipt = skip_index
+        first = self.wrapper.save_response("request-1", claim["token"], RESPONSE,
+                                           "application/json", "source-a")
+        second = self.wrapper.save_response("request-1", claim["token"], RESPONSE,
+                                            "application/json", "source-b")
+        self.wrapper._index_receipt = original
+        self.assertNotEqual(first["receipt_ref"], second["receipt_ref"])
+        with self.assertRaisesRegex(VerifiedExecutionError, "multiple conflicting"):
+            self.wrapper.discover_orphan_receipt("request-1", claim["token"])
+        self.assertIsNone(self.wrapper.receipt_for("request-1"))
+        self.assertEqual(self.wrapper.execution.get("request-1")["request"]["state"],
+                         "outcome_unknown")
+        self.assertEqual(self.budget.verify("shared")["unknown_holds"], 6)
+
+    def test_discovery_rejects_conflict_with_already_indexed_receipt(self):
+        claim, _ = self.claim_admit()
+        indexed = self.wrapper.save_response("request-1", claim["token"], RESPONSE,
+                                             "application/json", "source-a")["receipt_ref"]
+        original = self.wrapper._index_receipt
+        self.wrapper._index_receipt = lambda request_id, receipt_ref: None
+        self.wrapper.save_response("request-1", claim["token"], RESPONSE,
+                                   "application/json", "source-b")
+        self.wrapper._index_receipt = original
+        with self.assertRaisesRegex(VerifiedExecutionError, "multiple conflicting"):
+            self.wrapper.discover_orphan_receipt("request-1", claim["token"])
+        self.assertEqual(self.wrapper.receipt_for("request-1"), indexed)
+        self.assertEqual(self.wrapper.execution.get("request-1")["request"]["state"],
+                         "dispatch_intent")
+
+    def test_raw_blob_only_is_not_attributed_and_cap_overflow_fails_closed(self):
+        claim, _ = self.claim_admit()
+        put_artifact(self.store, RESPONSE, "application/json")
+        self.assertIsNone(self.wrapper.discover_orphan_receipt("request-1", claim["token"]))
+        with self.assertRaisesRegex(VerifiedExecutionError, "cap exceeded"):
+            self.wrapper.discover_orphan_receipt("request-1", claim["token"], max_objects=1)
+        self.assertIsNone(self.wrapper.receipt_for("request-1"))
+        self.assertEqual(self.budget.verify("shared")["active_reservations"], 6)
+
+    def test_corrupt_malformed_and_symlinked_objects_fail_discovery(self):
+        claim, _ = self.claim_admit()
+        malformed = {
+            "request_id": "request-1", "attempt_id": claim["attempt_id"],
+            "manifest_digest": self.enrolled["manifest_ref"].sha256,
+        }
+        put_artifact(self.store, json.dumps(malformed).encode(), "application/json")
+        with self.assertRaisesRegex(VerifiedExecutionError, "malformed"):
+            self.wrapper.discover_orphan_receipt("request-1", claim["token"])
+
+        # A fresh store isolates each failure mode; no scan may accept a partial result.
+        other_store = Path(self.temp.name) / "other-artifacts"
+        corrupt = put_artifact(other_store, RESPONSE, "application/json")
+        (other_store / corrupt.path).write_bytes(b"changed")
+        other = VerifiedExecution(self.database, other_store)
+        with self.assertRaisesRegex(EvidenceError, "mismatch"):
+            other.discover_orphan_receipt("request-1", claim["token"])
+
+        symlink_store = Path(self.temp.name) / "symlink-artifacts"
+        object_ref = put_artifact(symlink_store, RESPONSE, "application/json")
+        shard = symlink_store / "objects" / object_ref.sha256[:2]
+        (shard / ("f" * 64)).symlink_to(shard / object_ref.sha256)
+        linked = VerifiedExecution(self.database, symlink_store)
+        with self.assertRaisesRegex(VerifiedExecutionError, "symlinked artifact object"):
+            linked.discover_orphan_receipt("request-1", claim["token"])
+        root_link = Path(self.temp.name) / "artifact-root-link"
+        root_link.symlink_to(symlink_store, target_is_directory=True)
+        aliased = VerifiedExecution(self.database, root_link)
+        with self.assertRaisesRegex(VerifiedExecutionError, "real directory"):
+            aliased.discover_orphan_receipt("request-1", claim["token"])
 
 
 if __name__ == "__main__":
