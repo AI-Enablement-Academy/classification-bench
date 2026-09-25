@@ -6,7 +6,7 @@ Task contracts, matrix planning, request IDs, strict categorical evaluation, ful
 
 ## Next: integration decision and evidence contracts
 
-1. Pin candidate Inspect/promptfoo versions and licenses; run the existing project's bounded offline comparison. Record maintained code, manual interventions and failed gates.
+1. Completed: [bounded offline comparison](FRAMEWORK_COMPARISON.md) of pinned Inspect and promptfoo versions. Keep the project coordinator as the planned execution/accounting owner; both tools remain candidates for narrower integrations. Transitive license review and real adapter gates remain open.
 2. Implement and validate the [specified evidence contracts](EVIDENCE_CONTRACTS.md): attempts, raw artifacts, parser bindings, provider capabilities and usage. Keep request duration, provider generation time and pure inference time distinct.
 3. Completed: [replay one existing candidate-experience run](CASE_IMPORT_VERIFICATION.md) by explicit source hashes. The generic evaluator matches 60 valid outputs and all saved per-field scores. Source data remains external; this is not execution provenance or a new repeat.
 4. Demonstrate crash recovery, no duplicate settlement, uncertain-charge handling and label isolation with simulated providers before attaching credentials.

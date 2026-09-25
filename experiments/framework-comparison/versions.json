@@ -1,0 +1,19 @@
+{
+  "tested_on": "2026-09-25",
+  "platform": "macOS arm64",
+  "python": "3.14.0",
+  "node": "26.4.0",
+  "inspect_ai": {
+    "version": "0.3.268",
+    "pypi_wheel_sha256": "9354cb60a2ba1ebdb317c97641fc019165b7e1eb73b9faf46e4bb24db8c0d21b",
+    "installed_distribution_count": 78,
+    "installed_license_sha256": "c593c2afc81388521eaeb03f0d1a4b01bc3e5147ed9cb16c1f129e5be353b6af"
+  },
+  "promptfoo": {
+    "version": "0.123.1",
+    "npm_tarball_integrity": "sha512-9WzFeH6L+5E49R6CTulBo/WzmVPNcMpvgUZAyEsNlaKgpfmF9vV82jKUG1rQ+QH79P7gYAaxeY3TvLDV+x0Cbg==",
+    "temporary_npm_lock_sha256": "5577e69f68119515bce874476b89bce172b98b58c3ba07cd3b3d2b5b32047768",
+    "temporary_npm_lock_entries": 940,
+    "installed_license_sha256": "bf813686553f451e1b833fbd827488aee49b60b189626915bf3108d10b754e44"
+  }
+}

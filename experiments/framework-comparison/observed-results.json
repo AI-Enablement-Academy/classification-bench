@@ -1,0 +1,104 @@
+{
+  "default_retry_observation": {
+    "duration_seconds_cli": 60,
+    "final_view": "one success row",
+    "promptfoo_rate_limit_attempts": 2
+  },
+  "generated_artifact_sha256": {
+    "promptfoo-results.json": "a4cc882c94e56ec5ac0566a98d8ec731d10633aaabd261605418fe90e83d9616",
+    "promptfooconfig.json": "e449cd67fc495ed93ac4f9ea60bb4c08fb6a3e19186632f678b476f5227df162",
+    "requests.json": "b45354b58ea50a343a379840083e2fa6384e5dac207894a3387d7eb243154957",
+    "responses.json": "0fb062c454627a3cae8a465658fb5875958303638318ad192ac07b6baa0cd3b3"
+  },
+  "inspect_eval_sha256": {
+    "crash": "dc4859742c39b3753ae6bf32e433424af09c87aa9740aabcf616c04c9d5dc7ba",
+    "invalid": "d6fd94e2aac3c73f7f1780c75ac1c1004e4d643edbbfc85e9a41d72eb65ea3e8",
+    "paired_P1": "de13858f7737ed0ab1f47a37dfbd5890235659ccde8cbff3984c92528a3a362b",
+    "paired_P2": "51150a97b7ffa0d1ffc90bba5558fdf968fb9805e442ddaed1bd086f05bc13ea",
+    "rate_limit": "8ca9cf6931e757d6ebd36d24b4b2c34fbe6cf008ccce82e87b6de1c33382fa19",
+    "specialist": "d8db29d88b6c335b622f70a225e67bfab0662c2334ca1fffac564cd6cc0f4691"
+  },
+  "main_run": {
+    "inspect_attempt_counts": {
+      "crash": 1,
+      "invalid": 1,
+      "paired_P1": 1,
+      "paired_P2": 1,
+      "rate_limit": 2,
+      "specialist": 1
+    },
+    "inspect_crash_exit": 77,
+    "inspect_log_status": {
+      "crash": "started with zero samples",
+      "invalid": "success without a scorer",
+      "paired_P1": "success",
+      "paired_P2": "success",
+      "rate_limit": "success with two model events including one error",
+      "specialist": "success with native object in ModelCall"
+    },
+    "promptfoo_attempt_counts": {
+      "crash": 1,
+      "invalid": 1,
+      "paired_P1": 1,
+      "paired_P2": 1,
+      "rate_limit": 1,
+      "specialist": 1
+    },
+    "promptfoo_crash_exit": 77,
+    "promptfoo_export_rows": {
+      "invalid": {
+        "error_kind": "invalid_json",
+        "native_object_exported": false,
+        "success": false
+      },
+      "paired_P1": {
+        "error_kind": null,
+        "native_object_exported": false,
+        "success": true
+      },
+      "paired_P2": {
+        "error_kind": null,
+        "native_object_exported": false,
+        "success": true
+      },
+      "rate_limit": {
+        "error_kind": "rate_limit",
+        "native_object_exported": false,
+        "success": false
+      },
+      "specialist": {
+        "error_kind": null,
+        "native_object_exported": true,
+        "success": true
+      }
+    },
+    "promptfoo_no_retry_adaptive_scheduler_duration_seconds_cli": 60
+  },
+  "observed_on": "2026-09-25",
+  "scheduler_disabled_observation": {
+    "promptfoo_first_run_duration_seconds_cli": 0,
+    "promptfoo_first_run_rows": 5,
+    "promptfoo_two_no_cache_runs_attempt_counts": {
+      "invalid": 2,
+      "paired_P1": 2,
+      "paired_P2": 2,
+      "rate_limit": 2,
+      "specialist": 2
+    }
+  },
+  "scope": "synthetic saved responses; no model calls, credentials, references, or charges",
+  "source_sha256": {
+    "inspect_spike.py": "6d04ff3b14f12d1c15f20487727a407ea9108fdc844adb42b8c83444ebea7e1a",
+    "make_fixtures.py": "844188f500475219682eb9b5eb5deceeefbe7b7a06dde52846ad80002a8df892",
+    "provider.cjs": "95f830f50acacb87dc79832117ca3b816c3740fec5bd675952ec7abddbce59bc",
+    "test_verify.py": "1262b46ca735441ff1662af796f0569806d01ee7935f00fae3815b9765438c7e",
+    "verify.py": "2e12abf2fa84da88bcb9402fdf7c63f8d4869a83c5149417d1e3a92964eb1350"
+  },
+  "unverified": [
+    "real adapter request schema and provider controls",
+    "OS reference isolation",
+    "lease recovery and provider reconciliation",
+    "atomic reservation, duplicate settlement, unknown charge",
+    "transitive dependency license review"
+  ]
+}

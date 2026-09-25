@@ -36,7 +36,7 @@ Extract existing request builders, parsers and accounting contracts with attribu
 
 ## Build versus adopt
 
-Retain a thin project-owned task, identity, evidence and accounting layer. Evaluate Inspect AI and promptfoo offline before choosing scheduling or viewer components. Compare the same saved responses, invalid outputs, interrupted requests, duplicate settlements and missing metadata. Adoption must reduce code and operator work without changing experiment policy.
+Retain a thin project-owned task, identity, evidence and accounting layer. The [bounded offline comparison](FRAMEWORK_COMPARISON.md) tested Inspect AI and promptfoo; retain project ownership of execution and accounting while considering narrower adapters or viewers. Compare the same saved responses, invalid outputs, interrupted requests, duplicate settlements and missing metadata. Adoption must reduce code and operator work without changing experiment policy.
 
 Inspect already supports evaluation sets, epochs, concurrency and resume; its retry and cleanup options need deliberate configuration. Promptfoo provides a declarative prompt/provider/test configuration. These capabilities are candidates for reuse, not grounds to claim they already satisfy our reference-isolation or shared-budget requirements. [Inspect eval sets](https://inspect.aisi.org.uk/eval-sets.html), [promptfoo configuration](https://www.promptfoo.dev/docs/configuration/reference/), checked 2026-09-25.
 
