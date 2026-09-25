@@ -4,12 +4,12 @@
 
 Task contracts, matrix planning, request IDs, strict categorical evaluation, full-denominator metrics, repeat stability, synthetic fixtures and tests. No real model requests or new benchmark data.
 
-## Next: integration decision and evidence contracts
+## Current: evidence contracts and execution coordinator
 
 1. Completed: [bounded offline comparison](FRAMEWORK_COMPARISON.md) of pinned Inspect and promptfoo versions. Keep the project coordinator as the planned execution/accounting owner; both tools remain candidates for narrower integrations. Transitive license review and real adapter gates remain open.
-2. Implement and validate the [specified evidence contracts](EVIDENCE_CONTRACTS.md): attempts, raw artifacts, parser bindings, provider capabilities and usage. Keep request duration, provider generation time and pure inference time distinct.
+2. Partially complete: immutable raw artifacts and parser bindings implement part of the [evidence contracts](EVIDENCE_CONTRACTS.md). The [offline budget ledger](BUDGET_API.md) implements atomic reservations, unknown holds, idempotent settlement and audit replay. Complete attempt lifecycle, provider capability/usage binding and dispatch integration next. Keep request duration, provider generation time and pure inference time distinct.
 3. Completed: [replay one existing candidate-experience run](CASE_IMPORT_VERIFICATION.md) by explicit source hashes. The generic evaluator matches 60 valid outputs and all saved per-field scores. Source data remains external; this is not execution provenance or a new repeat.
-4. Demonstrate crash recovery, no duplicate settlement, uncertain-charge handling and label isolation with simulated providers before attaching credentials.
+4. Build and test single-host request claims and execution recovery with simulated providers. Ledger tests already cover restart, duplicate settlement and uncertain-charge holds; end-to-end dispatch recovery and enforced label isolation still need proof before attaching credentials. The case study continues on its existing adapters while this milestone is built.
 
 ## Then: live adapters and the first real repeat study
 
