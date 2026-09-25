@@ -45,6 +45,7 @@ The example has three fictional product descriptions, two categorical fields and
 - Per-pass scores and their mean/range, plus per-field and whole-response flip rates between repeat pairs.
 - Explicit IDs and denominators for comparable, changed and excluded repeat positions.
 - Offline reference scoring, with SHA-256 bindings for task, plan, labels and predictions.
+- A Python artifact-store API for raw bytes and immutable parser projections, with verified source bindings and concurrent publication.
 
 Reference labels are a separate file, opened only by `evaluate`. Plans contain the allowed output vocabulary, which is part of the task, but no answer key. This is a data-interface boundary, not an operating-system sandbox.
 
@@ -58,7 +59,7 @@ Changing prompts, models, providers, batch membership, sampling policy or refere
 
 ## Next implementation stages
 
-Live model execution, budgets, resume, raw-attempt storage and a report website are **not implemented** in v0.1. The [architecture](docs/ARCHITECTURE.md) and [delivery plan](docs/ROADMAP.md) describe how to add them while retaining the current benchmark's evidence.
+Live model execution, budgets, resume, an attempt-event ledger and a report website are **not implemented** in v0.1. The offline artifact-store primitives are available through the Python API; they are not yet connected to a runner. The [architecture](docs/ARCHITECTURE.md) and [delivery plan](docs/ROADMAP.md) describe how to add them while retaining the current benchmark's evidence.
 
 The core accepts categorical fields. Multi-label sets, numerical scores, rankings, multimodal inputs and free-text rationale scoring need separate contracts; they are not silently treated as categorical tasks.
 

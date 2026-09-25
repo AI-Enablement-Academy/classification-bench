@@ -1,6 +1,6 @@
 # Execution evidence contracts
 
-Status: design for the next implementation stage, 2026-09-25. The current planner and evaluator do not yet implement these records. This contract follows the source project's [system specification](https://github.com/adambkovacs/candidate-experience-benchmark/blob/main/docs/HARNESS_SPEC.md). It is independent of the pending framework comparison.
+Status: partial implementation, 2026-09-25. The offline artifact store and parsed-response bindings are implemented in `classification_bench/evidence.py`. Attempt events, execution manifests, provider capabilities, the budget ledger and live isolation remain design requirements. This contract follows the source project's [system specification](https://github.com/adambkovacs/candidate-experience-benchmark/blob/main/docs/HARNESS_SPEC.md). It is independent of the pending framework comparison.
 
 ## Identity and storage
 
@@ -11,6 +11,10 @@ The v0.1 planner binds task, configuration, prompt and membership by canonical J
 Raw artifacts use SHA-256 of their actual bytes, length, media type and a relative content-addressed location. Save request bodies and response/event bytes, excluding credentials and unrelated account data. Document any transport redaction. Canonical JSON hashes and byte hashes are different fields. A parsed projection never replaces original response bytes.
 
 Publish an artifact durably before committing an event that refers to it. Use a temporary file on the same filesystem, flush and fsync, then publish without replacing an existing destination and sync the directory. Verify an existing object with the same digest before reuse. A crash may leave an orphan artifact; it must not leave a committed response event pointing to absent bytes. Default storage is private. Public reports are a separate allowlisted export.
+
+The store API accepts a normalized MIME essence such as `application/json`, not an HTTP Content-Type header with parameters. Preserve the full header in transport evidence if needed. Newly created store directories use mode 0700 and object files use mode 0600. Existing directory permissions are the caller's responsibility and are not changed automatically.
+
+`put_artifact` and `read_artifact` store and verify raw bytes; `bind_parsed_attempt` and `load_parsed_attempt` preserve a parser projection bound to an existing response, request, attempt and parser digest. This layer checks projection shape, not task vocabulary or whether the parser judgment was correct. Use the task evaluator for label validation. The `unavailable` projection is only for an existing captured response whose prediction is unavailable. An attempt with no response has no parser binding; do not manufacture an empty response to satisfy this API. Its outcome belongs in the future attempt-event ledger.
 
 ## Attempt events
 
