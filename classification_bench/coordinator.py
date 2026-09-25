@@ -151,6 +151,13 @@ class Coordinator:
     def _view(row):
         return dict(row)
 
+    @staticmethod
+    def _reject_execution_owned(conn, request_id):
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_requests'").fetchone()
+        if exists and conn.execute("SELECT 1 FROM execution_requests WHERE request_id=?",
+                                   (request_id,)).fetchone():
+            raise CoordinatorError("execution-owned request requires atomic ExecutionLedger API")
+
     def enqueue(self, request_id, manifest_digest, request_artifact_digest):
         """Register immutable request identity; an identical replay is a no-op."""
         _text(request_id, "request_id")
@@ -180,9 +187,17 @@ class Coordinator:
             raise CoordinatorError("lease_seconds must be finite and positive")
         with self._transaction() as conn:
             now = time.time()
-            row = conn.execute("""SELECT * FROM requests
-                WHERE state='ready' OR (state='claimed' AND lease_until<=?)
-                ORDER BY seq LIMIT 1""", (now,)).fetchone()
+            integrated = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_requests'").fetchone()
+            if integrated:
+                row = conn.execute("""SELECT r.* FROM requests r
+                    LEFT JOIN execution_requests x ON x.request_id=r.request_id
+                    WHERE x.request_id IS NULL AND
+                    (r.state='ready' OR (r.state='claimed' AND r.lease_until<=?))
+                    ORDER BY r.seq LIMIT 1""", (now,)).fetchone()
+            else:
+                row = conn.execute("""SELECT * FROM requests
+                    WHERE state='ready' OR (state='claimed' AND lease_until<=?)
+                    ORDER BY seq LIMIT 1""", (now,)).fetchone()
             if row is None:
                 return None
             generation = row["generation"] + 1
@@ -201,6 +216,7 @@ class Coordinator:
         _text(token, "token")
         with self._transaction() as conn:
             row = self._row(conn, request_id)
+            self._reject_execution_owned(conn, request_id)
             if row["state"] != "claimed" or row["token"] != token or row["lease_until"] <= time.time():
                 raise CoordinatorError("claim is stale or dispatch intent was already recorded")
             conn.execute("UPDATE requests SET state='dispatch_intent', lease_until=NULL WHERE request_id=?",
@@ -221,6 +237,7 @@ class Coordinator:
             raise CoordinatorError("response_digest requires response_saved")
         with self._transaction() as conn:
             row = self._row(conn, request_id)
+            self._reject_execution_owned(conn, request_id)
             if row["token"] != token:
                 raise CoordinatorError("stale claim token")
             if row["state"] in ("response_saved", "not_sent", "outcome_unknown", "reconciled"):
@@ -249,6 +266,7 @@ class Coordinator:
             raise CoordinatorError("response_digest requires response_saved")
         with self._transaction() as conn:
             row = self._row(conn, request_id)
+            self._reject_execution_owned(conn, request_id)
             if row["state"] == "reconciled":
                 if (row["reconciliation_id"], row["reconciliation_outcome"],
                         row["reconciliation_response_digest"]) == (

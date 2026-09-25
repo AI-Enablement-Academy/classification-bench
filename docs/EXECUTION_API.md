@@ -1,0 +1,21 @@
+# Offline atomic execution admission
+
+`classification_bench.execution.ExecutionLedger` joins request coordination and money accounting in one private SQLite database on one host. It makes a claim token, frozen request digest, explicit budget scope, reservation, and `dispatch_started` event part of one commit. It makes no provider call and does not verify that authorization or price evidence supplied by the caller is true.
+
+Create the ledger with `ExecutionLedger(path)`. If `budget_path` is supplied, it must resolve to the same path. Create an explicit scope first with `BudgetLedger(path).create_scope(...)`. Amounts are integer monetary subunits under that scope's currency and scale. The existing `BudgetLedger` and `Coordinator` methods still work for requests outside this API. Their public mutation methods reject execution-owned attempts and requests so they cannot change one side of an enrolled request.
+
+| Method | Effect |
+| --- | --- |
+| `enqueue(request_id, manifest_digest, input_digest, scope)` | Enroll a request, its first attempt, frozen execution manifest and input artifact digest, and an existing budget scope. Identical enrollment is idempotent. A legacy request cannot be adopted. |
+| `claim(worker_id, lease_seconds)` | Claim only enrolled work. An expired claim can be reclaimed while no dispatch intent exists. The replacement gets a new token and generation; the attempt ID stays fixed. |
+| `admit(request_id, token, manifest_digest, input_digest, scope, reserve_amount, bound_source=...)` | Check the current unexpired claim and frozen evidence, reserve within the shared cap, and commit one dispatch intent. A zero reserve needs `no_fee_evidence`. A second admission fails, including replay with the same token. |
+| `complete(request_id, token, outcome, evidence_id, ...)` | Commit a terminal response observation and accounting change together. Outcomes are `response_saved`, `not_sent`, and `outcome_unknown`. Supply `response_digest` for a saved response. Supply `settlement_id`, `charge`, and zero charge evidence if needed when cost is known; otherwise supply `billing_reason` and retain the reserve as an unknown hold. Identical callback is idempotent. |
+| `settle_charge(request_id, settlement_id, charge, ...)` | Resolve a held charge after terminal observation. Record the full charge, even above reserve, and freeze further admission after an above-bound charge. Identical callback is idempotent. |
+| `reconcile(request_id, reconciliation_id, outcome, ...)` | Append a response finding for an earlier `outcome_unknown`. It never requeues the request or silently releases a hold. |
+| `get(request_id)` | Read the coordinator and execution rows. `BudgetLedger(path).verify(scope)` replays the money audit. |
+
+`admit` returns a durable record of the one dispatch decision. It is not a second reusable dispatch grant. The caller must persist and verify request bytes before enrollment and response bytes before `response_saved`. The API checks digest format and equality with enrollment; it does not fetch artifact bytes. A failure before the admission commit leaves no reserve and no dispatch intent. A crash after the commit leaves the reservation active and the request in `dispatch_intent`; restart will not issue another claim or grant. The operator must establish whether a call was sent and record a terminal outcome. A timeout alone cannot establish `not_sent`.
+
+`complete` and `settle_charge` return `request`, `execution`, and `budget` keys on both first calls and identical replays. On replay, `budget` is the current scope balance, which may include other attempts completed since the first call. Reading that balance adds no ledger event.
+
+An authorization source, price bound, usage report, zero charge assertion, and provider outcome remain caller-supplied evidence. No adapter, provider delivery, capability verification, process isolation, retry policy, new attempt allocation, or external exactly-once guarantee exists here. Do not connect a live provider until those controls are implemented and tested. This module supplies the local atomic accounting boundary described in [execution evidence contracts](EVIDENCE_CONTRACTS.md); the [budget API](BUDGET_API.md) remains available for independent offline accounting.

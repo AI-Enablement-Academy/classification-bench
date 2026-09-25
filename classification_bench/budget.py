@@ -179,6 +179,13 @@ class BudgetLedger:
               after["holds"] - before["holds"], after["known"], after["active"],
               after["holds"], after["frozen"]))
 
+    @staticmethod
+    def _reject_execution_owned(conn, attempt_id):
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_requests'").fetchone()
+        if exists and conn.execute("SELECT 1 FROM execution_requests WHERE attempt_id=?",
+                                   (attempt_id,)).fetchone():
+            raise BudgetError("execution-owned attempt requires atomic ExecutionLedger API")
+
     def create_scope(self, scope, cap, currency, scale, authorization_source):
         """Register an explicit cap and source; a conflicting redefinition fails."""
         _text(scope, "scope")
@@ -220,6 +227,24 @@ class BudgetLedger:
             if bound_source is not None:
                 raise BudgetError("bound_source applies only to positive reservations")
         with self._transaction() as conn:
+            self._reject_execution_owned(conn, attempt_id)
+            return self._reserve_in(conn, scope, attempt_id, amount,
+                                    bound_source=bound_source, no_fee_evidence=no_fee_evidence)
+
+    def _reserve_in(self, conn, scope, attempt_id, amount, *, bound_source=None,
+                    no_fee_evidence=None):
+            """Reserve on a caller-owned IMMEDIATE transaction after public validation."""
+            _text(scope, "scope")
+            _text(attempt_id, "attempt_id")
+            _money(amount, "amount")
+            if amount:
+                _text(bound_source, "bound_source")
+                if no_fee_evidence is not None:
+                    raise BudgetError("no_fee_evidence applies only to zero reservations")
+            else:
+                _text(no_fee_evidence, "no_fee_evidence")
+                if bound_source is not None:
+                    raise BudgetError("bound_source applies only to positive reservations")
             before = self._scope(conn, scope)
             if conn.execute("SELECT 1 FROM attempts WHERE scope=? AND attempt_id=?",
                             (scope, attempt_id)).fetchone():
@@ -244,6 +269,13 @@ class BudgetLedger:
         _text(attempt_id, "attempt_id")
         _text(reason, "reason")
         with self._transaction() as conn:
+            self._reject_execution_owned(conn, attempt_id)
+            return self._mark_unknown_in(conn, scope, attempt_id, reason)
+
+    def _mark_unknown_in(self, conn, scope, attempt_id, reason):
+            _text(scope, "scope")
+            _text(attempt_id, "attempt_id")
+            _text(reason, "reason")
             before = self._scope(conn, scope)
             attempt = conn.execute("SELECT * FROM attempts WHERE scope=? AND attempt_id=?",
                                    (scope, attempt_id)).fetchone()
@@ -270,6 +302,19 @@ class BudgetLedger:
         elif zero_charge_evidence is not None:
             raise BudgetError("zero_charge_evidence applies only to zero charges")
         with self._transaction() as conn:
+            self._reject_execution_owned(conn, attempt_id)
+            return self._settle_in(conn, scope, attempt_id, settlement_id, charge,
+                                   zero_charge_evidence=zero_charge_evidence)
+
+    def _settle_in(self, conn, scope, attempt_id, settlement_id, charge, *, zero_charge_evidence=None):
+            _text(scope, "scope")
+            _text(attempt_id, "attempt_id")
+            _text(settlement_id, "settlement_id")
+            _money(charge, "charge")
+            if charge == 0:
+                _text(zero_charge_evidence, "zero_charge_evidence")
+            elif zero_charge_evidence is not None:
+                raise BudgetError("zero_charge_evidence applies only to zero charges")
             before = self._scope(conn, scope)
             attempt = conn.execute("SELECT * FROM attempts WHERE scope=? AND attempt_id=?",
                                    (scope, attempt_id)).fetchone()
