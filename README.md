@@ -63,7 +63,7 @@ Changing prompts, models, providers, batch membership, sampling policy or refere
 
 ## Next implementation stages
 
-Live model execution, provider-aware recovery, enforced reference isolation and a report website are **not implemented** in v0.1. Offline artifact storage, attempt events and atomic coordination/accounting are available through Python APIs. They are not yet connected to a provider runner, so they do not enforce real spending. The [architecture](docs/ARCHITECTURE.md) and [delivery plan](docs/ROADMAP.md) describe how to add them while retaining the current benchmark's evidence.
+Live model execution, provider-aware recovery, integrated reference isolation and a report website are **not implemented** in v0.1. A tested [macOS offline worker boundary](docs/ISOLATION.md) now restricts a trusted child to one supplied input capsule and runtime files, denies network access, scrubs its environment, and bounds execution. It is not connected to a provider adapter; the caller still constructs the capsule without labels. Offline artifact storage, attempt events and atomic coordination/accounting are available through Python APIs. They are not yet connected to a provider runner, so they do not enforce real spending. The [architecture](docs/ARCHITECTURE.md) and [delivery plan](docs/ROADMAP.md) describe how to add them while retaining the current benchmark's evidence.
 
 The core accepts categorical fields. Multi-label sets, numerical scores, rankings, multimodal inputs and free-text rationale scoring need separate contracts; they are not silently treated as categorical tasks.
 
