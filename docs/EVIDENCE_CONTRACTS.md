@@ -1,6 +1,6 @@
 # Execution evidence contracts
 
-Status: partial implementation, 2026-09-25. The offline artifact store and parsed-response bindings are implemented in `classification_bench/evidence.py`. An [offline budget ledger](BUDGET_API.md) implements reservation and settlement accounting. Attempt events, execution manifests, provider capabilities, dispatch integration and live isolation remain design requirements. This contract follows the source project's [system specification](https://github.com/adambkovacs/candidate-experience-benchmark/blob/main/docs/HARNESS_SPEC.md). It is independent of the pending framework comparison.
+Status: partial implementation, 2026-09-25. The offline artifact store and parsed-response bindings are implemented in `classification_bench/evidence.py`. An [offline budget ledger](BUDGET_API.md) implements reservation and settlement accounting. The [coordinator](COORDINATOR_API.md) and [atomic execution API](EXECUTION_API.md) implement claims, attempt events, dispatch intent and coupled money accounting. The [verified execution wrapper](VERIFIED_EXECUTION.md) checks stored bytes and attempt receipts before completion. Complete execution manifests, provider capabilities, unattended orphan discovery, dispatch integration and live isolation remain unfinished. This contract follows the source project's [system specification](https://github.com/adambkovacs/candidate-experience-benchmark/blob/main/docs/HARNESS_SPEC.md). The [offline framework comparison](FRAMEWORK_COMPARISON.md) is complete; adopting a framework remains conditional on preserving these requirements.
 
 ## Identity and storage
 
@@ -14,7 +14,7 @@ Publish an artifact durably before committing an event that refers to it. Use a 
 
 The store API accepts a normalized MIME essence such as `application/json`, not an HTTP Content-Type header with parameters. Preserve the full header in transport evidence if needed. Newly created store directories use mode 0700 and object files use mode 0600. Existing directory permissions are the caller's responsibility and are not changed automatically.
 
-`put_artifact` and `read_artifact` store and verify raw bytes; `bind_parsed_attempt` and `load_parsed_attempt` preserve a parser projection bound to an existing response, request, attempt and parser digest. This layer checks projection shape, not task vocabulary or whether the parser judgment was correct. Use the task evaluator for label validation. The `unavailable` projection is only for an existing captured response whose prediction is unavailable. An attempt with no response has no parser binding; do not manufacture an empty response to satisfy this API. Its outcome belongs in the future attempt-event ledger.
+`put_artifact` and `read_artifact` store and verify raw bytes; `bind_parsed_attempt` and `load_parsed_attempt` preserve a parser projection bound to an existing response, request, attempt and parser digest. This layer checks projection shape, not task vocabulary or whether the parser judgment was correct. Use the task evaluator for label validation. The `unavailable` projection is only for an existing captured response whose prediction is unavailable. An attempt with no response has no parser binding; do not manufacture an empty response to satisfy this API. Its outcome belongs in the attempt-event ledger.
 
 ## Attempt events
 

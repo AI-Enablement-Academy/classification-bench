@@ -1,0 +1,20 @@
+# Verified offline artifacts for execution
+
+`classification_bench.verified_execution.VerifiedExecution` wraps the [atomic execution ledger](EXECUTION_API.md) and [artifact store](EVIDENCE_CONTRACTS.md). It verifies stored request and manifest bytes before enrollment and admission. It also publishes a response and a request-bound receipt before recording a terminal response. It makes no provider call.
+
+Create it with `VerifiedExecution(database_path, artifact_root)`. Create the budget scope through `BudgetLedger(database_path)` first. Keep both locations private and outside Git.
+
+| Method | Effect |
+| --- | --- |
+| `enqueue_bytes(request_id, scope, manifest_bytes, request_bytes, request_media_type=...)` | Store and re-read the exact manifest and request bytes. Enroll their byte SHA-256 digests. Return both `ArtifactRef` values for later admission. |
+| `admit_verified(request_id, token, scope, reserve_amount, manifest_ref, request_ref, ...)` | Re-read both artifacts, check their hashes against enrollment, then ask `ExecutionLedger` to reserve money and record one dispatch intent atomically. |
+| `save_response(request_id, token, response_bytes, media_type, source_id)` | Store and verify original response bytes. Store an immutable JSON receipt containing request ID, attempt ID, enrolled digests, caller-supplied source ID, and the response artifact reference. Index one receipt per request and attempt in SQLite. Return response and receipt refs. |
+| `receipt_for(request_id)` | Find an indexed receipt after restart. The lookup alone does not verify bytes; `recover_response` does. |
+| `recover_response(request_id, token, receipt_ref=..., billing_reason=..., settlement_id=..., charge=...)` | Verify receipt bytes, response bytes, and request/attempt binding. If dispatch intent is still open, record `response_saved` and settle a known charge or hold an unknown charge. If the request was already `outcome_unknown`, append verified reconciliation and leave its charge hold for explicit `ExecutionLedger.settle_charge`. It never dispatches or requeues. |
+| `record_unknown(request_id, token, evidence_id, billing_reason)` | Record caller-observed uncertainty and move the active reservation to a hold. The caller must supply truthful outcome evidence. |
+
+`save_response` publishes the response first, then the receipt, then its discovery index. The terminal database event is a separate call. A crash before the receipt index may leave orphan objects. At that point save_response has not returned its receipt ref. Unattended discovery of these orphan receipts is not implemented; manual recovery must locate and validate the exact receipt, then pass its ref explicitly. It must not infer attribution from a response blob or resend the request. A raw response blob cannot prove which request or attempt produced it. A crash after the index leaves a receipt discoverable by request ID; `recover_response` checks both artifact hashes before writing terminal evidence. An absent or altered artifact blocks completion. Concurrent identical receipts deduplicate; a different response or source ID for the same request fails without replacing the index.
+
+The receipt contains no admission token. It binds attribution asserted by the caller, not independent proof that a provider sent the response. The caller must supply real authorization, price bounds, source identity, usage, and charge evidence. A timeout alone does not prove `not_sent`. Missing cost stays held, including after a late response resolves `outcome_unknown`, until explicit settlement. The lower-level `ExecutionLedger` and `Coordinator` APIs remain callable and do not enforce artifact verification globally. This wrapper provides no process isolation, provider delivery, or external exactly-once guarantee.
+
+An identical `recover_response` call after `response_saved` must repeat the same billing evidence; a conflicting charge fails. After `outcome_unknown` has been reconciled, recovery accepts no billing arguments. Use explicit `ExecutionLedger.settle_charge` to resolve its hold.

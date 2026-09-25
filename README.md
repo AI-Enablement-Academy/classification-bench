@@ -47,6 +47,9 @@ The example has three fictional product descriptions, two categorical fields and
 - Offline reference scoring, with SHA-256 bindings for task, plan, labels and predictions.
 - A Python artifact-store API for raw bytes and immutable parser projections, with verified source bindings and concurrent publication.
 - An offline SQLite [budget API](docs/BUDGET_API.md) for atomic reservations, unresolved holds and idempotent settlements.
+- An offline [request coordinator](docs/COORDINATOR_API.md) with leased claims, stale-worker fencing and explicit crash reconciliation.
+- An [atomic execution API](docs/EXECUTION_API.md) joining claims, reservations and dispatch intent, with terminal accounting in the same database transaction.
+- A [verified execution wrapper](docs/VERIFIED_EXECUTION.md) that checks stored request/response bytes and immutable attempt receipts before recording response completion.
 
 Reference labels are a separate file, opened only by `evaluate`. Plans contain the allowed output vocabulary, which is part of the task, but no answer key. This is a data-interface boundary, not an operating-system sandbox.
 
@@ -60,7 +63,7 @@ Changing prompts, models, providers, batch membership, sampling policy or refere
 
 ## Next implementation stages
 
-Live model execution, end-to-end spending enforcement, resume, an attempt-event ledger and a report website are **not implemented** in v0.1. Offline artifact-store and money-ledger primitives are available through Python APIs; they are not yet connected to a runner. The [architecture](docs/ARCHITECTURE.md) and [delivery plan](docs/ROADMAP.md) describe how to add them while retaining the current benchmark's evidence.
+Live model execution, provider-aware recovery, enforced reference isolation and a report website are **not implemented** in v0.1. Offline artifact storage, attempt events and atomic coordination/accounting are available through Python APIs. They are not yet connected to a provider runner, so they do not enforce real spending. The [architecture](docs/ARCHITECTURE.md) and [delivery plan](docs/ROADMAP.md) describe how to add them while retaining the current benchmark's evidence.
 
 The core accepts categorical fields. Multi-label sets, numerical scores, rankings, multimodal inputs and free-text rationale scoring need separate contracts; they are not silently treated as categorical tasks.
 
