@@ -24,7 +24,7 @@ For a real repeat study, freeze membership, prompt bytes, model route, sampling 
 
 The reporting unit is an input record, grouped by scenario family where relevant. Repeats do not multiply independent sample size. Label stability, output validity and correctness are separate metrics. A consistently wrong answer is stable, and an invalid output is not a categorical flip.
 
-See the [execution evidence contracts](EVIDENCE_CONTRACTS.md) for the next-stage records and acceptance gates. The artifact and parser-binding subset is implemented; execution and accounting gates remain specified.
+See the [execution evidence contracts](EVIDENCE_CONTRACTS.md) for the next-stage records and acceptance gates. The artifact/parser-binding subset and offline money ledger are implemented; end-to-end execution, accounting admission and isolation gates remain specified.
 
 ## Live execution to extract next
 

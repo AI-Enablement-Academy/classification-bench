@@ -1,6 +1,6 @@
 # Execution evidence contracts
 
-Status: partial implementation, 2026-09-25. The offline artifact store and parsed-response bindings are implemented in `classification_bench/evidence.py`. Attempt events, execution manifests, provider capabilities, the budget ledger and live isolation remain design requirements. This contract follows the source project's [system specification](https://github.com/adambkovacs/candidate-experience-benchmark/blob/main/docs/HARNESS_SPEC.md). It is independent of the pending framework comparison.
+Status: partial implementation, 2026-09-25. The offline artifact store and parsed-response bindings are implemented in `classification_bench/evidence.py`. An [offline budget ledger](BUDGET_API.md) implements reservation and settlement accounting. Attempt events, execution manifests, provider capabilities, dispatch integration and live isolation remain design requirements. This contract follows the source project's [system specification](https://github.com/adambkovacs/candidate-experience-benchmark/blob/main/docs/HARNESS_SPEC.md). It is independent of the pending framework comparison.
 
 ## Identity and storage
 
