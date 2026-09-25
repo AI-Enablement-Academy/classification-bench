@@ -24,6 +24,8 @@ For a real repeat study, freeze membership, prompt bytes, model route, sampling 
 
 The reporting unit is an input record, grouped by scenario family where relevant. Repeats do not multiply independent sample size. Label stability, output validity and correctness are separate metrics. A consistently wrong answer is stable, and an invalid output is not a categorical flip.
 
+See the [execution evidence contracts](EVIDENCE_CONTRACTS.md) for the next-stage records and acceptance gates. They are specified, not implemented.
+
 ## Live execution to extract next
 
 Use a coordinator with SQLite on one host and immutable response artifacts. It should claim work in short transactions, reserve money before dispatch, and settle each attempt once. An uncertain started request retains its reservation and needs reconciliation; restarting must not blindly resend it. No database transaction spans inference.
