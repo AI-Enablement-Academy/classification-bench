@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "classification-bench"
+version = "0.1.0"
+description = "Offline, replayable classification benchmark core"
+requires-python = ">=3.10"
+
+[project.scripts]
+classification-bench = "classification_bench.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["classification_bench*"]

@@ -1,0 +1,13 @@
+{
+  "records": [
+    {"config_id": "synthetic-replay", "prompt_id": "baseline", "repeat": 1, "id": "toy-a", "prediction": {"segment": "teams", "urgency": "now"}},
+    {"config_id": "synthetic-replay", "prompt_id": "baseline", "repeat": 1, "id": "toy-b", "prediction": {"segment": "solo", "urgency": "later"}},
+    {"config_id": "synthetic-replay", "prompt_id": "baseline", "repeat": 1, "id": "toy-c", "prediction": {"segment": "teams", "urgency": "later"}},
+    {"config_id": "synthetic-replay", "prompt_id": "baseline", "repeat": 2, "id": "toy-a", "prediction": {"segment": "teams", "urgency": "now"}},
+    {"config_id": "synthetic-replay", "prompt_id": "baseline", "repeat": 2, "id": "toy-b", "prediction": {"segment": "teams", "urgency": "later"}},
+    {"config_id": "synthetic-replay", "prompt_id": "baseline", "repeat": 2, "id": "toy-c", "prediction": {"segment": "teams", "urgency": "later"}},
+    {"config_id": "synthetic-replay", "prompt_id": "baseline", "repeat": 3, "id": "toy-a", "prediction": {"segment": "teams", "urgency": "now"}},
+    {"config_id": "synthetic-replay", "prompt_id": "baseline", "repeat": 3, "id": "toy-b", "prediction": {"segment": "solo", "urgency": "unknown"}},
+    {"config_id": "synthetic-replay", "prompt_id": "baseline", "repeat": 3, "id": "toy-c", "prediction": {"segment": "teams", "urgency": "later"}}
+  ]
+}

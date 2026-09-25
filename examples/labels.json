@@ -1,0 +1,7 @@
+{
+  "records": [
+    {"id": "toy-a", "labels": {"segment": "teams", "urgency": "now"}},
+    {"id": "toy-b", "labels": {"segment": "solo", "urgency": "later"}},
+    {"id": "toy-c", "labels": {"segment": "teams", "urgency": "later"}}
+  ]
+}

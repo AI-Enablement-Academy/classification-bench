@@ -1,0 +1,6 @@
+{
+  "configs": [{"id": "synthetic-replay", "model": "fixture-only", "settings": {"reasoning": "low"}}],
+  "prompts": [{"id": "baseline", "text": "Classify the fictional product description."}],
+  "repeats": 3,
+  "batch_size": 2
+}
