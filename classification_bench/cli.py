@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .core import ValidationError, build_plan, evaluate
+from .isolation import IsolationError, IsolationUnavailable
 
 
 def _read(path):
@@ -36,15 +37,33 @@ def main(argv=None):
     score.add_argument("--labels", required=True)
     score.add_argument("--predictions", required=True)
     score.add_argument("--out", default="-")
+    simulation = sub.add_parser("simulate", help="Run a synthetic offline transport with verified evidence")
+    simulation.add_argument("--config", required=True)
+    recovery = sub.add_parser("simulate-recover", help="Verify saved synthetic receipts without dispatch")
+    recovery.add_argument("--config", required=True)
+    recovery.add_argument("--max-objects", type=int, help="Explicit private artifact scan bound")
+    exported = sub.add_parser("simulate-export", help="Export verified synthetic predictions without labels")
+    exported.add_argument("--config", required=True)
+    exported.add_argument("--out", default="-")
     args = parser.parse_args(argv)
     try:
         if args.command == "plan":
             output = build_plan(_read(args.task), _read(args.experiment), _read(args.inputs))
-        else:
+        elif args.command == "evaluate":
             output = evaluate(_read(args.task), _read(args.plan), _read(args.labels),
                               _read(args.predictions))
-        _write(args.out, output)
-    except (OSError, json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
+        elif args.command == "simulate":
+            from .run import simulate
+            output = simulate(args.config)
+        elif args.command == "simulate-recover":
+            from .run import recover_saved
+            output = recover_saved(args.config, max_objects=args.max_objects)
+        else:
+            from .run import export_saved_predictions
+            output = export_saved_predictions(args.config)
+        _write(getattr(args, "out", "-"), output)
+    except (OSError, json.JSONDecodeError, ValidationError, TypeError, ValueError,
+            IsolationError, IsolationUnavailable) as exc:
         parser.exit(2, f"classification-bench: {exc}\n")
 
 

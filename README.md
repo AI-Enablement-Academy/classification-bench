@@ -2,7 +2,7 @@
 
 A reusable benchmark core for categorical classification tasks: define the task, compare prompts and model configurations, and measure both agreement and repeatability.
 
-**Current release: offline foundation.** It creates deterministic request plans and scores saved predictions. It does not call models yet. The included three-pass example is a synthetic software fixture, not evidence of model performance or nondeterminism.
+**Current release: offline planning, scoring and simulated execution.** It creates deterministic request plans, scores saved predictions, and exercises budget admission and crash recovery through an isolated fake worker. It does not call models yet. The included three-pass example is a synthetic software fixture, not evidence of model performance or nondeterminism.
 
 ## Why a separate project
 
@@ -51,7 +51,9 @@ The example has three fictional product descriptions, two categorical fields and
 - An [atomic execution API](docs/EXECUTION_API.md) joining claims, reservations and dispatch intent, with terminal accounting in the same database transaction.
 - A [verified execution wrapper](docs/VERIFIED_EXECUTION.md) that checks stored request/response bytes and immutable attempt receipts before recording response completion.
 
-Reference labels are a separate file, opened only by `evaluate`. Plans contain the allowed output vocabulary, which is part of the task, but no answer key. This is a data-interface boundary, not an operating-system sandbox.
+The [simulated runner](docs/SIMULATED_RUN.md) runs a declared single-configuration, single-prompt experiment across all records and repeats, with verified manifests, explicit recovery and label-free prediction export. Its macOS worker enforces file and network restrictions; unsupported hosts fail closed.
+
+Reference labels are a separate file, opened only by `evaluate`. Plans contain the allowed output vocabulary, which is part of the task, but no answer key. The planner has a data-interface boundary; the simulated execution path separately uses the tested [macOS isolation boundary](docs/ISOLATION.md).
 
 ## Reading the metrics
 
