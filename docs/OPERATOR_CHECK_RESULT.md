@@ -20,3 +20,16 @@ Report SHA-256 values:
 - Product: `dc369239560b50a6c512a7f379162a37100a31c5aceed60871387cce36e0c1d1`
 
 Independent operator execution is verified. Browser inspection and live verification of the updated adapter identity path remain separate, pending release checks.
+
+## User-supplied interaction evidence
+
+The user subsequently supplied eight copied report views, four for each fixture. Their contents demonstrate these states:
+
+| Report | All prompts/passes | Selected prompt | Selected prompt and pass | Expanded cases |
+| --- | --- | --- | --- | --- |
+| Product | 12 pass sections | baseline: 6 sections | baseline/pass 1: 2 sections | 3 invalid case rows |
+| Candidate | 12 pass sections | explicit: 6 sections | explicit/pass 2: 2 sections | 3 valid-but-disagreeing case rows |
+
+Every view retains the whole-experiment totals: 36 positions, 18 valid, 18 invalid, zero missing. Provenance hashes remain identical within each four-view sequence. The expanded rows include input text, references, predictions and outcome labels. This verifies the demonstrated filtering and expansion through user-supplied browser text, not direct agent browser observation. It does not prove visual readability, reset-to-All behavior, collapse behavior or interactions with the other five selectors.
+
+Exact supplied text and SHA-256 digests are archived privately under `private-data/operator-check-20260928/user-pasted-views/`. Layout inspection and live verification of the updated adapter identity path remain pending. The earlier browser limitation describes the initial agent inspection, before these additional user-supplied views.
