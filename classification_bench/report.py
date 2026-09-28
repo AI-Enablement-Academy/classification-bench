@@ -1,0 +1,398 @@
+"""Private, self-contained HTML report from validated offline evidence."""
+
+from collections import Counter, defaultdict
+from html import escape
+import json
+import math
+
+from .core import ValidationError, _digest, evaluate
+
+
+def _h(value):
+    return escape(str(value), quote=True)
+
+
+def _rate(numerator, denominator):
+    return f"{numerator}/{denominator} ({numerator / denominator:.1%})" if denominator else "0/0 (unavailable)"
+
+
+def _number(value, unit=""):
+    if value is None:
+        return "unavailable"
+    if (isinstance(value, bool) or not isinstance(value, (int, float)) or
+            (isinstance(value, float) and not math.isfinite(value)) or value < 0):
+        raise ValidationError("operation measurement must be numeric or null")
+    return f"{value:,.3f}{unit}" if isinstance(value, float) else f"{value:,}{unit}"
+
+
+def _table(headers, rows):
+    head = "".join(f"<th scope='col'>{_h(x)}</th>" for x in headers)
+    body = "".join("<tr>" + "".join(f"<td>{_h(x)}</td>" for x in row) + "</tr>" for row in rows)
+    return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+
+
+_MEASUREMENTS = ("duration_seconds", "provider_generation_seconds", "pure_inference_seconds",
+                 "input_tokens", "output_tokens", "reasoning_tokens", "cache_tokens",
+                 "observed_cost_micro_usd", "estimated_cost_micro_usd", "unresolved_hold_micro_usd")
+
+
+def _svg(title, description, contents, chart_id, height, width=760):
+    return (f"<svg role='img' aria-labelledby='{chart_id}-title {chart_id}-desc' "
+            f"viewBox='0 0 {width} {height}' width='100%' height='{height}' xmlns='http://www.w3.org/2000/svg'>"
+            f"<title id='{chart_id}-title'>{_h(title)}</title>"
+            f"<desc id='{chart_id}-desc'>{_h(description)}</desc>"
+            "<style>text{font:14px system-ui,sans-serif;fill:#18222c}.score{fill:#176c8a}.delta{fill:#9a4b11}"
+            ".range{stroke:#273747;stroke-width:5}</style>" + contents + "</svg>")
+
+
+def _score_visual(condition, chart_id):
+    passes = condition["passes"]
+    body = ""
+    for index, entry in enumerate(passes):
+        y = 38 + index * 42
+        width = round(300 * entry["all_field_exact_rate"], 2)
+        body += (f"<text x='5' y='{y + 15}'>Pass {entry['repeat']}</text>"
+                 f"<rect class='score' x='140' y='{y}' width='{width}' height='20'/>"
+                 f"<text x='450' y='{y + 15}'>{entry['all_field_exact']}/{entry['denominator']} "
+                 f"({entry['all_field_exact_rate']:.1%})</text>")
+    low, high = condition["pass_score_range"]
+    y = 46 + len(passes) * 42
+    x1, x2 = 140 + 300 * low, 140 + 300 * high
+    body += (f"<text x='5' y='{y}'>Pass range</text>"
+             f"<line class='range' x1='{x1:.2f}' x2='{x2:.2f}' y1='{y - 5}' y2='{y - 5}'/>"
+             f"<text x='450' y='{y}'>{low:.1%} to {high:.1%}</text>")
+    return _svg("Exact agreement by pass", "Bars show all-field exact agreement divided by every planned case in each pass. The line shows the range across passes.",
+                body, chart_id, y + 20)
+
+
+def _delta_visual(condition, baseline_scores, baseline_id, chart_id):
+    body = ""
+    details = []
+    for index, entry in enumerate(condition["passes"]):
+        before = baseline_scores[entry["repeat"]]
+        delta = entry["all_field_exact"] - before
+        y = 30 + index * 40
+        x = 300 if delta >= 0 else 300 - 200 * abs(delta) / entry["denominator"]
+        width = 200 * abs(delta) / entry["denominator"]
+        body += (f"<text x='5' y='{y + 15}'>Pass {entry['repeat']}</text>"
+                 f"<line x1='300' x2='300' y1='{y - 2}' y2='{y + 24}' stroke='#273747'/>"
+                 f"<rect class='delta' x='{x:.2f}' y='{y}' width='{width:.2f}' height='20'/>"
+                 f"<text x='520' y='{y + 15}'>{delta:+d}/{entry['denominator']}</text>")
+        details.append(f"pass {entry['repeat']}: {delta:+d} exact matches")
+    return _svg("Paired prompt effect", f"Difference from {baseline_id} within each pass; left is fewer exact matches and right is more. "
+                + "; ".join(details), body, chart_id, 45 + len(condition["passes"]) * 40)
+
+
+def _cost_visual(condition, costs, chart_id, currency):
+    known = [value for value in costs.values() if value is not None]
+    if not known:
+        return ""
+    highest = max(known) or 1
+    body = f"<text x='140' y='20'>Agreement</text><text x='385' y='20'>Observed {_h(currency)}</text>"
+    for index, entry in enumerate(condition["passes"]):
+        y = 34 + index * 42
+        cost = costs.get(entry["repeat"])
+        body += (f"<text x='5' y='{y + 15}'>Pass {entry['repeat']}</text>"
+                 f"<rect class='score' x='140' y='{y}' width='{200 * entry['all_field_exact_rate']:.2f}' height='20'/>"
+                 f"<text x='345' y='{y + 15}'>{entry['all_field_exact_rate']:.0%}</text>")
+        if cost is None:
+            body += f"<text x='600' y='{y + 15}'>unavailable</text>"
+        else:
+            body += (f"<rect class='delta' x='385' y='{y}' width='{200 * cost / highest:.2f}' height='20'/>"
+                     f"<text x='600' y='{y + 15}'>{_number(cost)}</text>")
+    return _svg("Agreement and observed cost", f"Each row shows exact agreement on the full denominator and the sum of recorded {currency} for that pass. Cost bars scale to the largest observed pass value; missing values remain unavailable.",
+                body, chart_id, 44 + len(condition["passes"]) * 42)
+
+
+def _operation_summary(records, planned_count, currency):
+    if not records:
+        return f"<p>No request evidence supplied for {planned_count} planned request(s); timing, token and cost measures are unavailable.</p>"
+    states = Counter(str(record.get("state") or "unavailable") for record in records)
+    states["no operation record"] += planned_count - len(records)
+    parsed = Counter(str(record.get("parsed_status") or "unavailable") for record in records)
+    parsed["no operation record"] += planned_count - len(records)
+    state_text = ", ".join(f"{state}: {count}" for state, count in sorted(states.items()) if count)
+    parsed_text = ", ".join(f"{state}: {count}" for state, count in sorted(parsed.items()) if count)
+    cells = []
+    for key, label, unit in (
+        ("duration_seconds", "Client request duration", " s"),
+        ("provider_generation_seconds", "Provider generation time", " s"),
+        ("pure_inference_seconds", "Pure inference time", " s"),
+    ):
+        values = [r.get(key) for r in records if r.get(key) is not None]
+        cells.append((label, f"{_number(sum(values) / len(values), unit)} mean across {len(values)} request(s)" if values else "unavailable"))
+    for key, label in (
+        ("input_tokens", "Input tokens"), ("output_tokens", "Output tokens"),
+        ("reasoning_tokens", "Reasoning tokens"), ("cache_tokens", "Cache tokens"),
+        ("observed_cost_micro_usd", "Observed provider charges"),
+        ("estimated_cost_micro_usd", "Pricing estimates"),
+        ("unresolved_hold_micro_usd", "Unresolved budget holds"),
+    ):
+        values = [r.get(key) for r in records if r.get(key) is not None]
+        suffix = f" {currency}" if key.endswith("micro_usd") else ""
+        if key == "observed_cost_micro_usd" and currency == "SYN units":
+            label = "Observed synthetic accounting"
+        cells.append((label, f"{_number(sum(values), suffix)} across {len(values)} request(s)" if values else "unavailable"))
+    subscription = "Synthetic accounting is not a provider charge." if currency == "SYN units" else "Subscription cost: unavailable."
+    identity_rows = [(r['request_id'], r.get('provider') or 'unavailable',
+                      r.get('returned_provider') or 'unavailable',
+                      r.get('returned_model') or 'unavailable',
+                      r.get('provider_identity_status') or 'unavailable',
+                      r.get('receipt_sha256') or 'unavailable') for r in records]
+    return (f"<p>Request lifecycle: {_h(state_text)}. Parsed outcomes: {_h(parsed_text)}. "
+            f"{subscription}</p>") + _table(
+        ("Measure", "Recorded value"), cells) + _table(
+        ("Request ID", "Requested provider", "Observed provider", "Returned model",
+         "Provider identity evidence", "Verified receipt SHA-256"), identity_rows)
+
+
+def _observed_outcome(key, invalid, supplied, operation):
+    """Classify one planned position once, using parsed evidence where present."""
+    parsed = operation.get("parsed_status") if operation else None
+    if key in invalid:
+        return "invalid"
+    if key in supplied:
+        return "valid selected"
+    if parsed in ("invalid", "refused", "failed", "unknown"):
+        return parsed
+    if parsed == "valid":
+        return "valid response, no selected prediction"
+    if parsed == "unavailable":
+        return "parsed outcome unavailable"
+    if operation is None:
+        return "no operation record"
+    state = operation.get("state")
+    if state in ("never_sent", "ready", "claimed"):
+        return "never sent"
+    if state in ("dispatch_intent", "outcome_unknown"):
+        return "dispatch outcome unknown"
+    return "no selected prediction; outcome unavailable"
+
+
+def generate_report(task, plan, labels, predictions, operations=None):
+    """Return a local HTML report. Inputs and references remain in its case details."""
+    result = evaluate(task, plan, labels, predictions)
+    if operations is None:
+        operations = []
+    if not isinstance(operations, list) or any(not isinstance(x, dict) for x in operations):
+        raise ValidationError("operations: expected a list of records")
+    request_map = {r["request_id"]: r for r in plan["requests"]}
+    operation_map = defaultdict(list)
+    position_operation = {}
+    seen_operations = set()
+    for record in operations:
+        rid = record.get("request_id")
+        if rid not in request_map:
+            raise ValidationError(f"operation: unknown request_id {rid!r}")
+        if rid in seen_operations:
+            raise ValidationError(f"operation: duplicate request_id {rid!r}")
+        seen_operations.add(rid)
+        request = request_map[rid]
+        for key in ("config_id", "prompt_id", "repeat"):
+            if key in record and record[key] != request[key]:
+                raise ValidationError(f"operation: {key} disagrees with plan")
+        membership = [item["id"] for item in request["items"]]
+        if "ids" in record and record["ids"] != membership:
+            raise ValidationError("operation: ids disagree with plan membership")
+        for record_id in membership:
+            position_operation[(request["config_id"], request["prompt_id"],
+                                request["repeat"], record_id)] = record
+        for key in _MEASUREMENTS:
+            if key in record and record[key] is not None:
+                _number(record[key])
+        operation_map[rid].append(record)
+
+    configs = {x["id"]: x for x in plan["experiment"]["configs"]}
+    prompts = {x["id"]: x for x in plan["experiment"]["prompts"]}
+    references = {x["id"]: x["labels"] for x in labels["records"]}
+    supplied = {(x["config_id"], x["prompt_id"], x["repeat"], x["id"]): x["prediction"]
+                for x in predictions["records"]}
+    invalid = {(x["config_id"], x["prompt_id"], x["repeat"], x["id"]) for x in result["invalid"]}
+    items = {x["id"]: x["input"] for x in plan["requests"][0]["items"]}
+    for req in plan["requests"]:
+        if req["config_id"] == plan["experiment"]["configs"][0]["id"] and req["prompt_id"] == plan["experiment"]["prompts"][0]["id"] and req["repeat"] == 1:
+            items.update({x["id"]: x["input"] for x in req["items"]})
+    all_ids = list(items)
+    total = result["positions"]
+    valid_count = total - result["missing"] - len(result["invalid"])
+    outcomes = {key: _observed_outcome(key, invalid, supplied, position_operation.get(key))
+                for request in plan["requests"] for item in request["items"]
+                for key in [(request["config_id"], request["prompt_id"], request["repeat"], item["id"])]}
+    outcome_counts = Counter(outcomes.values())
+    if sum(outcome_counts.values()) != total:
+        raise ValidationError("report outcomes do not cover the planned denominator")
+    pages = []
+    score_by_pass = {}
+    for condition in result["conditions"]:
+        cid, pid = condition["config_id"], condition["prompt_id"]
+        for entry in condition["passes"]:
+            score_by_pass[(cid, pid, entry["repeat"])] = entry["all_field_exact"]
+    baseline = plan["experiment"]["prompts"][0]["id"]
+    findings = [f"{valid_count} of {total} planned positions have a valid selected classification. "
+                f"{result['missing']} have no selected prediction; {len(result['invalid'])} have an invalid selected projection. "
+                "Observed runner outcomes are counted separately below, once per planned position. "
+                "A valid classification may still disagree with its reference."]
+    if len(prompts) > 1:
+        findings.append(f"Prompt effects compare each prompt with {_h(baseline)} within the same configuration and pass.")
+
+    for condition in result["conditions"]:
+        cid, pid = condition["config_id"], condition["prompt_id"]
+        config, prompt = configs[cid], prompts[pid]
+        settings = config.get("settings", {})
+        currency = "SYN units" if (settings.get("adapter") == "synthetic" or
+                                    any(str(op.get("route", "")).startswith("synthetic:")
+                                        for op in operations
+                                        if request_map[op["request_id"]]["config_id"] == cid)) else "micro USD"
+        rows = []
+        costs = {}
+        for entry in condition["passes"]:
+            repeat = entry["repeat"]
+            requests = [r for r in plan["requests"] if (r["config_id"], r["prompt_id"], r["repeat"]) == (cid, pid, repeat)]
+            ops = [o for r in requests for o in operation_map[r["request_id"]]]
+            charges = [o["observed_cost_micro_usd"] for o in ops if o.get("observed_cost_micro_usd") is not None]
+            costs[repeat] = sum(charges) if charges else None
+            metadata = {key: next((o.get(key) for o in ops if o.get(key) is not None), None)
+                        for key in ("provider", "model", "route", "effort")}
+            metadata["model"] = metadata["model"] or config["model"]
+            for key in ("provider", "route", "effort"):
+                metadata[key] = metadata[key] or settings.get(key) or (settings.get("reasoning") if key == "effort" else None)
+            values = {"task": task["name"], "model": metadata["model"], "provider": metadata["provider"],
+                      "effort": metadata["effort"], "prompt": pid, "repeat": str(repeat), "route": metadata["route"]}
+            attributes = " ".join(f"data-{key}='{_h(value if value is not None else 'unavailable')}'"
+                                  for key, value in values.items())
+            field_rows = []
+            for field in task["fields"]:
+                name = field["name"]
+                stats = entry["fields"][name]
+                diagonal = sum(stats["confusion"][label][label] for label in field["labels"])
+                support = ", ".join(f"{label}: {stats['labels'][label]['support']}" for label in field["labels"])
+                errors = [(actual, predicted, count) for actual in field["labels"]
+                          for predicted in field["labels"] if actual != predicted
+                          for count in [stats["confusion"][actual][predicted]] if count]
+                confusion = ", ".join(f"{a} → {b}: {n}" for a, b, n in errors) or "none"
+                field_rows.append((name, _rate(diagonal, entry["denominator"]), support, confusion,
+                                   json.dumps(stats["unscored_by_true_label"], ensure_ascii=False)))
+            case_rows = []
+            pass_outcomes = Counter()
+            for record_id in all_ids:
+                key = (cid, pid, repeat, record_id)
+                status = outcomes[key]
+                pass_outcomes[status] += 1
+                prediction = supplied.get(key) if key not in invalid else None
+                agreement = "unscored" if prediction is None else "agree" if prediction == references[record_id] else "disagree"
+                case_rows.append((record_id, status, agreement,
+                                  json.dumps(references[record_id], ensure_ascii=False),
+                                  json.dumps(supplied[key], ensure_ascii=False) if key in supplied else "unavailable",
+                                  json.dumps(items[record_id], ensure_ascii=False)))
+            outcome_rows = [(status, count, entry["denominator"]) for status, count in sorted(pass_outcomes.items())]
+            paired = []
+            if pid != baseline:
+                before = score_by_pass[(cid, baseline, repeat)]
+                after = entry["all_field_exact"]
+                paired.append(f"Paired prompt effect against {_h(baseline)}: {after - before:+d} exact matches "
+                              f"({before}/{entry['denominator']} → {after}/{entry['denominator']}).")
+            rows.append(f"<section class='pass' {attributes}><h3>{_h(cid)} · {_h(pid)} · pass {repeat}</h3>"
+                        f"<p>Requested model: {_h(metadata['model'])}; requested provider: {_h(metadata['provider'] or 'unavailable')}; "
+                        f"route: {_h(metadata['route'] or 'unavailable')}; effort: {_h(metadata['effort'] or 'unavailable')}.</p>"
+                        "<p>Requested routing is not proof of the serving provider. See observed identity evidence for each request below.</p>"
+                        f"<p>Exact agreement: {_rate(entry['all_field_exact'], entry['denominator'])}; "
+                        f"no selected prediction: {entry['missing']}; invalid selected projection: {entry['invalid']}. "
+                        "Every planned position remains in the denominator. These projection counts are distinct from observed runner outcomes.</p>"
+                        + "".join(f"<p>{line}</p>" for line in paired)
+                        + "<h4>Observed position outcomes</h4>"
+                        + _table(("Outcome", "Positions", "Planned denominator"), outcome_rows)
+                        + "<h4>Field agreement and class errors</h4>"
+                        + _table(("Field", "Agreement", "Reference class support", "Valid disagreements", "Unscored by reference class"), field_rows)
+                        + "<h4>Request evidence</h4>" + _operation_summary(ops, len(requests), currency)
+                        + "<details><summary>Supporting cases (private input text and references)</summary>"
+                        + _table(("Case", "Output", "Agreement", "Reference", "Prediction", "Input"), case_rows)
+                        + "</details></section>")
+        comparisons = []
+        for comparison in condition["repeat_comparisons"]:
+            comparisons.append((f"{comparison['repeat_a']} vs {comparison['repeat_b']}",
+                                _rate(comparison["flips"], comparison["comparable"]),
+                                str(comparison["excluded"]), ", ".join(comparison["changed_ids"]) or "none"))
+        lo, hi = condition["pass_score_range"]
+        chart_id = f"chart-{len(pages)}"
+        baseline_scores = {p["repeat"]: score_by_pass[(cid, baseline, p["repeat"])]
+                           for p in condition["passes"]}
+        visuals = _score_visual(condition, chart_id + "-score")
+        if pid != baseline:
+            visuals += _delta_visual(condition, baseline_scores, baseline, chart_id + "-delta")
+        visuals += _cost_visual(condition, costs, chart_id + "-cost", currency)
+        pages.append(f"<article><h2>{_h(cid)} · {_h(pid)}</h2>"
+                     f"<p>Prompt: {_h(prompt['text'])}</p>"
+                     f"<p>Exact agreement across passes: {lo:.1%} to {hi:.1%}. "
+                     "Each pass uses the same input cases; passes are separate dispatches. "
+                     "For synthetic outputs, repeated passes show pipeline behavior, not model variability.</p>"
+                     "<p>Condition overview below covers all passes, even when a pass filter is selected.</p>"
+                     + visuals
+                     + ("<h3>Repeat changes</h3>" + _table(("Passes", "Changed valid cases", "Excluded cases", "Changed case IDs"), comparisons)
+                        if comparisons else "<p>No repeat comparison is available.</p>")
+                     + "".join(rows) + "</article>")
+
+    filters = []
+    for key, label in (("task", "Task"), ("model", "Model"), ("provider", "Provider"),
+                       ("effort", "Effort"), ("prompt", "Prompt"), ("repeat", "Pass"), ("route", "Route")):
+        if key == "task":
+            values = [task["name"]]
+        else:
+            values = sorted({str(value) for value in _filter_values(key, plan, operations)})
+        options = "<option value=''>All</option>" + "".join(f"<option value='{_h(v)}'>{_h(v)}</option>" for v in values)
+        filters.append(f"<label>{label} <select data-filter='{key}'>{options}</select></label>")
+    source_rows = [(name, digest) for name, digest in result["source_hashes"].items()]
+    if operations:
+        source_rows.append(("supplied operations", _digest(operations)))
+    script = """document.querySelectorAll('[data-filter]').forEach(select => select.addEventListener('change', () => {
+      const filters = [...document.querySelectorAll('[data-filter]')];
+      document.querySelectorAll('.pass').forEach(section => {
+        section.hidden = filters.some(filter => filter.value && section.dataset[filter.dataset.filter] !== filter.value);
+      });
+      document.querySelectorAll('article').forEach(article => {
+        article.hidden = !article.querySelector('.pass:not([hidden])');
+      });
+    }));"""
+    return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+            f"<title>{_h(task['name'])} · local classification report</title>"
+            "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:1100px;margin:auto;padding:2rem;color:#18222c;background:#f7f8fa}"
+            "h1,h2,h3{line-height:1.2}article,.pass,header,footer{background:white;border:1px solid #d8dfe6;border-radius:8px;padding:1rem;margin:1rem 0}"
+            "table{border-collapse:collapse;width:100%;display:block;overflow-x:auto}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #d8dfe6;padding:.5rem;white-space:pre-wrap;overflow-wrap:anywhere}"
+            "label{display:inline-block;margin:.3rem}select{font:inherit;max-width:14rem}details{margin-top:1rem}"
+            ".pass[hidden],article[hidden]{display:none}svg{max-width:100%;margin:.5rem 0}</style></head><body>"
+            f"<header><h1>{_h(task['name'])}</h1><p>Private local classification report</p>"
+            "<h2>Whole experiment summary (unfiltered)</h2><p>Filters below apply to pass details. "
+            "The totals and findings in this summary always cover the complete experiment.</p>"
+            f"<p>Planned positions: {total}; valid selected predictions: {valid_count}; no selected prediction: {result['missing']}; invalid selected projection: {len(result['invalid'])}.</p>"
+            "<h2>Observed position outcomes</h2>"
+            + _table(("Outcome", "Positions", "Planned denominator"),
+                     [(status, count, total) for status, count in sorted(outcome_counts.items())])
+            + "<p>Each planned position appears once in this table. A missing selected prediction can correspond to a refusal, failure, unknown dispatch, or a request without observed evidence.</p>"
+            "<p>Scores use all planned positions. Positions without valid selected predictions receive no agreement credit. "
+            "Request timing is measured per request, which may contain a batch; it is not per-case inference latency.</p>"
+            "<h2>Findings</h2>" + "".join(f"<p>{x}</p>" for x in findings)
+            + "<nav aria-label='Report filters'>" + " ".join(filters) + "</nav></header>"
+            + "".join(pages)
+            + "<footer><h2>Provenance</h2><p>Canonical JSON SHA-256 digests bind the task, plan, references, selected prediction set and any supplied operation records. "
+            "The evaluator validates planned positions and predictions; the caller is responsible for verifying operation records. "
+            "This file includes private inputs and reference labels. Keep it local.</p>"
+            + _table(("Source", "SHA-256"), source_rows)
+            + "</footer><script>" + script + "</script></body></html>")
+
+
+def _filter_values(key, plan, operations):
+    values = set()
+    if key == "prompt":
+        return {x["id"] for x in plan["experiment"]["prompts"]}
+    if key == "repeat":
+        return {str(x) for x in range(1, plan["experiment"]["repeats"] + 1)}
+    for config in plan["experiment"]["configs"]:
+        settings = config.get("settings", {})
+        value = config["model"] if key == "model" else settings.get(key)
+        if key == "effort" and value is None:
+            value = settings.get("reasoning")
+        values.add(value or "unavailable")
+    for op in operations:
+        if key in op and op[key] is not None:
+            values.add(op[key])
+    return values

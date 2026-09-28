@@ -29,6 +29,16 @@ def first_open_worker(path, start, results):
         results.put(f"{type(exc).__name__}: {exc}")
 
 
+def cap_increase_worker(path, amendment_id, start, results):
+    start.wait()
+    try:
+        view = BudgetLedger(path).increase_cap("shared", amendment_id, 10, 20,
+                                               f"authorization {amendment_id}")
+        results.put((amendment_id, view["cap"]))
+    except BudgetError as exc:
+        results.put((amendment_id, str(exc)))
+
+
 class BudgetTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -51,6 +61,89 @@ class BudgetTests(unittest.TestCase):
         with self.assertRaisesRegex(BudgetError, "different terms"):
             self.ledger.create_scope("shared", 11, "USD", 100, "explicit test authorization")
         self.assertEqual(self.ledger.verify("shared")["audit_events"], 1)
+
+    def test_explicit_cap_increase_is_conditional_audited_and_idempotent(self):
+        self.ledger.reserve("shared", "a", 8, bound_source="bound")
+        self.ledger.mark_unknown("shared", "a", "possible dispatch")
+        after = self.ledger.increase_cap("shared", "approval-2", 10, 20,
+                                         "user authorization record 2")
+        self.assertEqual(after["cap"], 20)
+        self.assertEqual(after["unknown_holds"], 8)
+        self.assertEqual(after["remaining"], 12)
+        self.assertEqual(self.ledger.verify("shared")["audit_events"], 4)
+        self.assertEqual(self.ledger.increase_cap("shared", "approval-2", 10, 20,
+                                                   "user authorization record 2"), after)
+        self.assertEqual(self.ledger.verify("shared")["audit_events"], 4)
+        self.assertEqual(BudgetLedger(self.path).create_scope("shared", 10, "USD", 100,
+                                  "explicit test authorization")["cap"], 20)
+        with self.assertRaisesRegex(BudgetError, "different terms"):
+            self.ledger.create_scope("shared", 20, "USD", 100, "explicit test authorization")
+
+    def test_cap_increase_rejects_conflicting_or_stale_amendments(self):
+        with self.assertRaises(BudgetError):
+            self.ledger.increase_cap("shared", "a", 10, 10, "authorization")
+        with self.assertRaises(BudgetError):
+            self.ledger.increase_cap("shared", "a", 10, 9, "authorization")
+        with self.assertRaises(BudgetError):
+            self.ledger.increase_cap("shared", "a", 10, 11, "")
+        self.ledger.increase_cap("shared", "a", 10, 11, "authorization")
+        with self.assertRaisesRegex(BudgetError, "conflicting cap amendment"):
+            self.ledger.increase_cap("shared", "a", 10, 12, "authorization")
+        with self.assertRaisesRegex(BudgetError, "changed since expected"):
+            self.ledger.increase_cap("shared", "b", 10, 12, "authorization 2")
+        self.assertEqual(self.ledger.balances("shared")["cap"], 11)
+
+    def test_cap_increase_does_not_clear_above_bound_freeze(self):
+        self.ledger.reserve("shared", "a", 5, bound_source="bound")
+        self.ledger.settle("shared", "a", "receipt", 12)
+        after = self.ledger.increase_cap("shared", "approval-2", 10, 20,
+                                         "user authorization record 2")
+        self.assertTrue(after["frozen"])
+        self.assertFalse(after["over_cap"])
+        with self.assertRaisesRegex(BudgetError, "frozen"):
+            self.ledger.reserve("shared", "b", 1, bound_source="bound")
+
+    def test_cap_amendment_events_are_immutable_and_verified(self):
+        self.ledger.increase_cap("shared", "approval-2", 10, 20, "authorization 2")
+        with closing(sqlite3.connect(self.path)) as conn:
+            with self.assertRaises(sqlite3.DatabaseError):
+                conn.execute("UPDATE cap_events SET new_cap=30 WHERE amendment_id='approval-2'")
+            with self.assertRaises(sqlite3.DatabaseError):
+                conn.execute("DELETE FROM cap_events WHERE amendment_id='approval-2'")
+            conn.execute("UPDATE scopes SET cap=30 WHERE scope='shared'")
+            conn.commit()
+        with self.assertRaisesRegex(BudgetError, "cap disagrees"):
+            self.ledger.verify("shared")
+
+    def test_concurrent_cap_increases_require_one_expected_current_cap(self):
+        context = multiprocessing.get_context("spawn")
+        start = context.Event()
+        results = context.Queue()
+        processes = [context.Process(target=cap_increase_worker,
+                                     args=(str(self.path), name, start, results))
+                     for name in ("approval-a", "approval-b")]
+        for process in processes:
+            process.start()
+        start.set()
+        outcomes = [results.get(timeout=20) for _ in processes]
+        for process in processes:
+            process.join(timeout=20)
+            self.assertEqual(process.exitcode, 0)
+        self.assertEqual(sorted(str(result) for _, result in outcomes),
+                         ["20", "scope cap changed since expected value"])
+        self.assertEqual(BudgetLedger(self.path).verify("shared")["audit_events"], 2)
+
+    def test_existing_ledger_without_cap_table_is_backfilled(self):
+        self.ledger.reserve("shared", "a", 3, bound_source="bound")
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("DROP TRIGGER cap_events_no_update")
+            conn.execute("DROP TRIGGER cap_events_no_delete")
+            conn.execute("DROP TABLE cap_events")
+            conn.commit()
+        reopened = BudgetLedger(self.path)
+        self.assertEqual(reopened.verify("shared")["audit_events"], 2)
+        self.assertEqual(reopened.increase_cap("shared", "approval-2", 10, 20,
+                                                "new authorization")["cap"], 20)
 
     def test_new_database_and_journal_are_private_under_normal_umask(self):
         path = Path(self.temp.name) / "normal-umask.sqlite"

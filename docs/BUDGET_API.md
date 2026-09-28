@@ -1,6 +1,6 @@
 # Offline budget ledger API
 
-`classification_bench.budget.BudgetLedger` is an offline SQLite primitive. It does not call providers, authenticate authorizations, verify price quotations or enforce subscription quotas. No live runner uses it yet. The existing case study keeps its original ledger and spending limits.
+`classification_bench.budget.BudgetLedger` is an offline SQLite primitive. It does not call providers, authenticate authorizations, verify price quotations or enforce subscription quotas. The authorization-gated [matrix runner](RUNNER.md) uses it; provider spending remains live-unverified. The existing case study keeps its original ledger and spending limits.
 
 Every scope needs an explicit positive cap, currency, integer scale and authorization source. Amounts are integer subunits: a scale of 1,000,000 means one million units per currency unit. No default cap or permission is inferred. Separate scopes are separate authorizations; do not split one authorization into several scopes to multiply its cap.
 
@@ -20,3 +20,9 @@ The implementation uses short SQLite `BEGIN IMMEDIATE` transactions and FULL syn
 New databases are created exclusively with mode 0600. Existing database files and SQLite journal/WAL/shared-memory files must be regular, owned by the current user and inaccessible to group/other users. Unsafe files are rejected without chmod or overwrite. This implementation targets the project's POSIX single-host environment; it is not a multi-host service. Keep the database in private local storage, outside Git and public exports.
 
 Pricing and authorization evidence are caller-supplied strings. A future admission layer must bind verified source artifacts and check provider capabilities before a reservation can authorize dispatch. The ledger is necessary accounting machinery, not proof that external spending is safely integrated.
+
+## Explicit cap amendments
+
+`increase_cap(scope, amendment_id, expected_cap, new_cap, authorization_source)` conditionally raises the total cap in one transaction. An immutable cap-event chain binds each amendment to the money audit. Exact repeated amendments are idempotent; conflicting IDs, stale expected caps and decreases fail. Original creation terms remain valid for restart after an increase. `verify` checks the cap chain as well as balances. Legacy ledgers receive an initial cap event without replacing their money history.
+
+A cap amendment changes no charges, reservations or holds and cannot clear an above-bound freeze. The CLI additionally binds the authorization to the exact run hash; see [budget-increase and exhaustion policies](RUNNER.md).

@@ -43,3 +43,7 @@ native code, and it does not prove that caller-supplied source, capsule content,
 provider attribution, or billing evidence is truthful. There is no provider
 call, credential access, or subscription/API adapter here. The benchmark's
 broader requirement is described in [Evidence contracts](EVIDENCE_CONTRACTS.md).
+
+## Network-capable matrix worker
+
+The new `NetworkSandboxedPythonWorker` preserves reference and symlink file denials and a scrubbed environment while permitting TCP443, DNS and specific certificate/resolver reads. Its real OS probe passes in the final integrated offline suite. The trusted OpenRouter adapter uses fixed HTTPS endpoints with redirects and proxies disabled. No live provider call was made to establish this file-boundary test; DNS/TLS connectivity to the provider remains part of the authorized smoke. See [current status](IMPLEMENTATION_STATUS.md).

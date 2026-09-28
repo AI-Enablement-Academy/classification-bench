@@ -9,3 +9,9 @@ dist/
 !.env.example
 artifacts/
 private-data/
+
+# Local memory-tool runtime artifacts; not benchmark evidence
+.claude-flow/
+.swarm/
+agentdb.rvf*
+ruvector.db*

@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -21,6 +22,13 @@ def _write(path, value):
     else:
         with Path(path).open("x", encoding="utf-8") as target:
             target.write(content)
+
+
+def _write_private_html(path, content):
+    """Local reports contain private input/reference text; never overwrite."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+        target.write(content)
 
 
 def main(argv=None):
@@ -45,6 +53,27 @@ def main(argv=None):
     exported = sub.add_parser("simulate-export", help="Export verified synthetic predictions without labels")
     exported.add_argument("--config", required=True)
     exported.add_argument("--out", default="-")
+    for command, help_text in (
+        ("preview", "Preview matrix, exact request identities and spending bounds"),
+        ("run", "Execute an admitted matrix; never replay ambiguous dispatches"),
+        ("status", "Inspect all planned requests and shared budget"),
+        ("recover", "Recover saved receipts without sending requests"),
+        ("export", "Export verified predictions for private offline scoring"),
+    ):
+        child = sub.add_parser(command, help=help_text)
+        child.add_argument("--config", required=True)
+        child.add_argument("--out", default="-")
+    report = sub.add_parser("report", help="Write a private local HTML report from verified saved evidence")
+    report.add_argument("--config", required=True)
+    report.add_argument("--labels", required=True, help="Offline references; never passed to the runner")
+    report.add_argument("--out", required=True)
+    catalog = sub.add_parser("catalog", help="Fetch a public endpoint snapshot without credentials or inference")
+    catalog.add_argument("--model", required=True)
+    catalog.add_argument("--provider", required=True)
+    catalog.add_argument("--out", required=True)
+    increase = sub.add_parser("budget-increase", help="Apply an explicit, run-bound budget amendment")
+    increase.add_argument("--config", required=True)
+    increase.add_argument("--authorization", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "plan":
@@ -58,9 +87,32 @@ def main(argv=None):
         elif args.command == "simulate-recover":
             from .run import recover_saved
             output = recover_saved(args.config, max_objects=args.max_objects)
-        else:
+        elif args.command == "simulate-export":
             from .run import export_saved_predictions
             output = export_saved_predictions(args.config)
+        elif args.command == "catalog":
+            from .adapters import fetch_endpoint_snapshot
+            output = fetch_endpoint_snapshot(args.model, args.provider)
+        elif args.command == "budget-increase":
+            from .benchmark import amend_budget
+            output = amend_budget(args.config, args.authorization)
+        elif args.command == "report":
+            from .benchmark import report_snapshot
+            from .report import generate_report
+            # Verified export is performed before the evaluator opens references.
+            snapshot = report_snapshot(args.config)
+            html = generate_report(snapshot["task"], snapshot["plan"], _read(args.labels),
+                                   snapshot["predictions"], snapshot["operations"])
+            _write_private_html(args.out, html)
+            output = {"report": str(Path(args.out).resolve()), "visibility": "private-local"}
+            _write("-", output)
+            return
+        else:
+            from . import benchmark
+            operation = {"preview": benchmark.preview, "run": benchmark.run,
+                         "status": benchmark.status, "recover": benchmark.recover,
+                         "export": benchmark.export_predictions}[args.command]
+            output = operation(args.config)
         _write(getattr(args, "out", "-"), output)
     except (OSError, json.JSONDecodeError, ValidationError, TypeError, ValueError,
             IsolationError, IsolationUnavailable) as exc:

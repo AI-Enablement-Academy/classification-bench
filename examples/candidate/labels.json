@@ -1,0 +1,31 @@
+{
+  "records": [
+    {
+      "id": "fictional-a",
+      "labels": {
+        "sentiment": "positive",
+        "follow_up_needed": "no",
+        "serious_concern_reported": "no",
+        "testimonial_potential": "yes"
+      }
+    },
+    {
+      "id": "fictional-b",
+      "labels": {
+        "sentiment": "negative",
+        "follow_up_needed": "yes",
+        "serious_concern_reported": "no",
+        "testimonial_potential": "no"
+      }
+    },
+    {
+      "id": "fictional-c",
+      "labels": {
+        "sentiment": "negative",
+        "follow_up_needed": "yes",
+        "serious_concern_reported": "yes",
+        "testimonial_potential": "no"
+      }
+    }
+  ]
+}

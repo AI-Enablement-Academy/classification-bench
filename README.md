@@ -2,7 +2,9 @@
 
 A reusable benchmark core for categorical classification tasks: define the task, compare prompts and model configurations, and measure both agreement and repeatability.
 
-**Current release: offline planning, scoring and simulated execution.** It creates deterministic request plans, scores saved predictions, and exercises budget admission and crash recovery through an isolated fake worker. It does not call models yet. The included three-pass example is a synthetic software fixture, not evidence of model performance or nondeterminism.
+**Current status: matrix runner and local report implemented and offline tested; live smoke pending authorization.** The runner previews exact work, runs independent configurations under one shared ledger, preserves uncertain attempts, and supports user-selected budget pause or stop. The first OpenRouter adapter is implemented but has not been live verified. Synthetic examples test the software, not model quality or nondeterminism.
+
+Start with the [operator workflow](docs/RUNNER.md), [configurable smoke plan](docs/LIVE_SMOKE_PLAN.md) and [implementation status](docs/IMPLEMENTATION_STATUS.md).
 
 For a new implementation task, start with the [handoff](docs/HANDOFF.md), [goal description](docs/NEXT_TASK_GOAL.md) and [benchmark lessons](docs/BENCHMARK_LESSONS.md).
 
@@ -55,7 +57,7 @@ The example has three fictional product descriptions, two categorical fields and
 
 The [simulated runner](docs/SIMULATED_RUN.md) runs a declared single-configuration, single-prompt experiment across all records and repeats, with verified manifests, explicit recovery and label-free prediction export. Its macOS worker enforces file and network restrictions; unsupported hosts fail closed.
 
-Reference labels are a separate file, opened only by `evaluate`. Plans contain the allowed output vocabulary, which is part of the task, but no answer key. The planner has a data-interface boundary; the simulated execution path separately uses the tested [macOS isolation boundary](docs/ISOLATION.md).
+Reference labels are a separate file, opened only by offline `evaluate` and `report`. Plans contain the allowed output vocabulary, which is part of the task, but no answer key. The planner has a data-interface boundary; the simulated execution path separately uses the tested [macOS isolation boundary](docs/ISOLATION.md).
 
 ## Reading the metrics
 
@@ -65,9 +67,18 @@ Flip rates compare only positions with valid predictions in both passes and repo
 
 Changing prompts, models, providers, batch membership, sampling policy or reference versions creates a different comparison. Recovery attempts and cached replay do not count as fresh model repetitions.
 
-## Next implementation stages
+## Matrix runner and report
 
-Live model execution, provider-aware recovery, integrated reference isolation and a report website are **not implemented** in v0.1. A tested [macOS offline worker boundary](docs/ISOLATION.md) now restricts a trusted child to one supplied input capsule and runtime files, denies network access, scrubs its environment, and bounds execution. It is not connected to a provider adapter; the caller still constructs the capsule without labels. Offline artifact storage, attempt events and atomic coordination/accounting are available through Python APIs. They are not yet connected to a provider runner, so they do not enforce real spending. The [architecture](docs/ARCHITECTURE.md) and [delivery plan](docs/ROADMAP.md) describe how to add them while retaining the current benchmark's evidence.
+```sh
+python3 -m scripts.offline_demo --task candidate --directory /tmp/candidate-demo
+python3 -m scripts.offline_demo --task product --directory /tmp/product-demo
+```
+
+Each command runs a full synthetic matrix and writes a private local HTML report. The report includes outcome denominators, field and exact agreement, class support, confusion counts, paired prompt effects, repeat ranges/flips, supporting cases and separately sourced timing/token/cost evidence. Filters include every declared route by default. Reference labels are opened only after the runner produces its verified report snapshot.
+
+The same runner accepts an [OpenRouter configuration](docs/OPENROUTER.md) after an explicit run-bound authorization. Caps are operator settings for both smoke and full runs. At exhaustion, `pause` preserves the queue for an audited cap increase; `stop` permanently stops new dispatches for that run. Neither releases unknown charges. The original `simulate` workflow remains available and uses its existing offline sandbox.
+
+Live serving, hosting-provider attribution and billing remain unverified until an authorized smoke. The HTTPS child enforces a tested macOS file boundary; other operating systems fail closed for live execution. Subscription CLI and native specialist adapters remain future work, with unsupported configurations visible in the roster. No public deployment or source-project migration is included.
 
 The core accepts categorical fields. Multi-label sets, numerical scores, rankings, multimodal inputs and free-text rationale scoring need separate contracts; they are not silently treated as categorical tasks.
 

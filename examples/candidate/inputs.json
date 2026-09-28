@@ -1,0 +1,22 @@
+{
+  "records": [
+    {
+      "id": "fictional-a",
+      "input": {
+        "feedback": "The recruiter explained every step and answered my questions. I have nothing outstanding."
+      }
+    },
+    {
+      "id": "fictional-b",
+      "input": {
+        "feedback": "My interview was cancelled twice without explanation. Please tell me whether it will be rescheduled."
+      }
+    },
+    {
+      "id": "fictional-c",
+      "input": {
+        "feedback": "I was asked for my bank password during the interview. Please investigate."
+      }
+    }
+  ]
+}

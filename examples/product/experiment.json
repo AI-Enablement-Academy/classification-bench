@@ -1,0 +1,32 @@
+{
+  "configs": [
+    {
+      "id": "synthetic-first",
+      "model": "synthetic-only",
+      "settings": {
+        "adapter": "synthetic",
+        "response_mode": "first_label"
+      }
+    },
+    {
+      "id": "synthetic-invalid",
+      "model": "synthetic-only",
+      "settings": {
+        "adapter": "synthetic",
+        "response_mode": "invalid"
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "baseline",
+      "text": "Classify each fictional product. Segment is teams for shared or group use, otherwise solo. Urgency is now for a planning board needed immediately, otherwise later. Use only the declared field labels."
+    },
+    {
+      "id": "explicit",
+      "text": "Classify each fictional product. Segment is teams for shared or group use, otherwise solo. Urgency is now for a planning board needed immediately, otherwise later. Use only the declared field labels. Check every field against the text before returning the classification."
+    }
+  ],
+  "repeats": 3,
+  "batch_size": 2
+}

@@ -1,6 +1,6 @@
 # Architecture
 
-Status: v0.1 offline core implemented; live execution is proposed. Repository visibility is private under AI-Enablement-Academy.
+Status: core, matrix runner, OpenRouter adapter and private local report implemented and offline tested; live verification pending authorization. See [current implementation status](IMPLEMENTATION_STATUS.md) and [operator workflow](RUNNER.md). Repository visibility is private under AI-Enablement-Academy.
 
 ## Product boundary
 

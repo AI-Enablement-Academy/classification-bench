@@ -1,0 +1,25 @@
+{
+  "records": [
+    {
+      "id": "toy-a",
+      "input": {
+        "description": "A shared planning board",
+        "audience": "Small creative studio"
+      }
+    },
+    {
+      "id": "toy-b",
+      "input": {
+        "description": "A personal idea notebook",
+        "audience": "Independent hobbyist"
+      }
+    },
+    {
+      "id": "toy-c",
+      "input": {
+        "description": "A team calendar",
+        "audience": "Volunteer group"
+      }
+    }
+  ]
+}

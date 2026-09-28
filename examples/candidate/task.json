@@ -1,0 +1,42 @@
+{
+  "name": "fictional-candidate-experience",
+  "input_keys": [
+    "feedback"
+  ],
+  "fields": [
+    {
+      "name": "sentiment",
+      "labels": [
+        "positive",
+        "negative",
+        "mixed",
+        "neutral",
+        "insufficient_information"
+      ]
+    },
+    {
+      "name": "follow_up_needed",
+      "labels": [
+        "yes",
+        "no",
+        "insufficient_information"
+      ]
+    },
+    {
+      "name": "serious_concern_reported",
+      "labels": [
+        "yes",
+        "no",
+        "insufficient_information"
+      ]
+    },
+    {
+      "name": "testimonial_potential",
+      "labels": [
+        "yes",
+        "no",
+        "insufficient_information"
+      ]
+    }
+  ]
+}

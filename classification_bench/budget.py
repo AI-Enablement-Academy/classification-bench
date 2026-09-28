@@ -104,9 +104,38 @@ class BudgetLedger:
                 BEGIN SELECT RAISE(ABORT, 'audit events are immutable'); END;
                 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_events
                 BEGIN SELECT RAISE(ABORT, 'audit events are immutable'); END;
+                CREATE TABLE IF NOT EXISTS cap_events (
+                    event_id INTEGER PRIMARY KEY REFERENCES audit_events(event_id),
+                    scope TEXT NOT NULL REFERENCES scopes(scope),
+                    amendment_id TEXT,
+                    expected_cap INTEGER NOT NULL CHECK(expected_cap > 0),
+                    new_cap INTEGER NOT NULL CHECK(new_cap > 0),
+                    authorization_source TEXT NOT NULL,
+                    UNIQUE(scope, amendment_id)
+                );
+                CREATE TRIGGER IF NOT EXISTS cap_events_no_update BEFORE UPDATE ON cap_events
+                BEGIN SELECT RAISE(ABORT, 'cap events are immutable'); END;
+                CREATE TRIGGER IF NOT EXISTS cap_events_no_delete BEFORE DELETE ON cap_events
+                BEGIN SELECT RAISE(ABORT, 'cap events are immutable'); END;
             """)
         finally:
             conn.close()
+        # Backfill the initial cap for databases created before cap amendments
+        # existed. Existing audit balance events and the initial authorization
+        # terms remain untouched.
+        with self._transaction() as conn:
+            for row in conn.execute("""SELECT * FROM scopes WHERE scope NOT IN
+                                      (SELECT scope FROM cap_events)""").fetchall():
+                creation = conn.execute("""SELECT event_id FROM audit_events
+                                           WHERE scope=? AND event_type='scope_created'
+                                           ORDER BY event_id LIMIT 1""", (row["scope"],)).fetchone()
+                if creation is None:
+                    raise BudgetError("missing scope creation audit event")
+                conn.execute("""INSERT INTO cap_events
+                             (event_id,scope,amendment_id,expected_cap,new_cap,authorization_source)
+                             VALUES (?,?,NULL,?,?,?)""",
+                             (creation["event_id"], row["scope"], row["cap"], row["cap"],
+                              row["authorization_source"]))
 
     def _connect(self):
         _validate_database_files(self.path)
@@ -158,6 +187,39 @@ class BudgetLedger:
         if last is None or any(row[key] != totals[key] or row[key] != last[f"{key}_after"]
                                for key in ("known", "active", "holds")) or row["frozen"] != last["frozen_after"]:
             raise BudgetError("ledger balances disagree with attempts or audit trail")
+        self._verify_cap_chain(conn, row)
+
+    @staticmethod
+    def _verify_cap_chain(conn, row):
+        events = conn.execute("""SELECT c.*, a.event_type, a.scope AS audit_scope,
+                              a.known_delta, a.active_delta, a.holds_delta
+                              FROM cap_events c JOIN audit_events a ON a.event_id=c.event_id
+                              WHERE c.scope=? ORDER BY c.event_id""", (row["scope"],)).fetchall()
+        audit_ids = [x["event_id"] for x in conn.execute("""SELECT event_id FROM audit_events
+                       WHERE scope=? AND event_type IN ('scope_created','cap_increased')
+                       ORDER BY event_id""", (row["scope"],)).fetchall()]
+        if not events or [x["event_id"] for x in events] != audit_ids:
+            raise BudgetError("cap amendment audit chain mismatch")
+        original = events[0]
+        if (original["event_type"] != "scope_created" or original["amendment_id"] is not None or
+                original["expected_cap"] != original["new_cap"] or
+                original["authorization_source"] != row["authorization_source"]):
+            raise BudgetError("initial cap authorization mismatch")
+        cap = original["new_cap"]
+        for index, event in enumerate(events):
+            if (event["audit_scope"] != row["scope"] or
+                    (event["known_delta"], event["active_delta"], event["holds_delta"]) != (0, 0, 0)):
+                raise BudgetError("cap amendment audit event mismatch")
+            if index == 0:
+                continue
+            if (event["event_type"] != "cap_increased" or not event["amendment_id"] or
+                    not event["authorization_source"] or event["expected_cap"] != cap or
+                    event["new_cap"] <= cap):
+                raise BudgetError("invalid cap amendment chain")
+            cap = event["new_cap"]
+        if row["cap"] != cap:
+            raise BudgetError("scope cap disagrees with amendment chain")
+        return original["new_cap"]
 
     @staticmethod
     def _view(row):
@@ -169,7 +231,7 @@ class BudgetLedger:
                 "over_cap": total > row["cap"], "frozen": bool(row["frozen"])}
 
     def _audit(self, conn, scope, attempt_id, kind, before, after):
-        conn.execute("""
+        cursor = conn.execute("""
             INSERT INTO audit_events
             (scope,attempt_id,event_type,known_delta,active_delta,holds_delta,
              known_after,active_after,holds_after,frozen_after)
@@ -178,6 +240,7 @@ class BudgetLedger:
               after["known"] - before["known"], after["active"] - before["active"],
               after["holds"] - before["holds"], after["known"], after["active"],
               after["holds"], after["frozen"]))
+        return cursor.lastrowid
 
     @staticmethod
     def _reject_execution_owned(conn, attempt_id):
@@ -198,15 +261,50 @@ class BudgetLedger:
             old = conn.execute("SELECT * FROM scopes WHERE scope=?", (scope,)).fetchone()
             if old is not None:
                 self._verify_scope(conn, old)
-                if (old["cap"], old["currency"], old["scale"], old["authorization_source"]) != (
+                original_cap = self._verify_cap_chain(conn, old)
+                if (original_cap, old["currency"], old["scale"], old["authorization_source"]) != (
                         cap, currency, scale, authorization_source):
                     raise BudgetError("authorization scope already exists with different terms")
                 return self._view(old)
             conn.execute("""INSERT INTO scopes(scope,cap,currency,scale,authorization_source)
                          VALUES (?,?,?,?,?)""", (scope, cap, currency, scale, authorization_source))
             row = conn.execute("SELECT * FROM scopes WHERE scope=?", (scope,)).fetchone()
-            self._audit(conn, scope, None, "scope_created", row, row)
+            event_id = self._audit(conn, scope, None, "scope_created", row, row)
+            conn.execute("""INSERT INTO cap_events
+                         (event_id,scope,amendment_id,expected_cap,new_cap,authorization_source)
+                         VALUES (?,?,NULL,?,?,?)""", (event_id, scope, cap, cap, authorization_source))
             return self._view(row)
+
+    def increase_cap(self, scope, amendment_id, expected_cap, new_cap, authorization_source):
+        """Apply one expressly authorized, conditional increase to a scope cap."""
+        _text(scope, "scope")
+        _text(amendment_id, "amendment_id")
+        _money(expected_cap, "expected_cap", positive=True)
+        _money(new_cap, "new_cap", positive=True)
+        _text(authorization_source, "authorization_source")
+        if new_cap <= expected_cap:
+            raise BudgetError("new cap must exceed expected cap")
+        with self._transaction() as conn:
+            before = self._scope(conn, scope)
+            existing = conn.execute("SELECT * FROM cap_events WHERE scope=? AND amendment_id=?",
+                                    (scope, amendment_id)).fetchone()
+            if existing is not None:
+                if (existing["expected_cap"], existing["new_cap"], existing["authorization_source"]) != (
+                        expected_cap, new_cap, authorization_source):
+                    raise BudgetError("conflicting cap amendment identity")
+                return self._view(before)
+            if before["cap"] != expected_cap:
+                raise BudgetError("scope cap changed since expected value")
+            conn.execute("UPDATE scopes SET cap=? WHERE scope=?", (new_cap, scope))
+            after = conn.execute("SELECT * FROM scopes WHERE scope=?", (scope,)).fetchone()
+            event_id = self._audit(conn, scope, None, "cap_increased", before, after)
+            conn.execute("""INSERT INTO cap_events
+                         (event_id,scope,amendment_id,expected_cap,new_cap,authorization_source)
+                         VALUES (?,?,?,?,?,?)""",
+                         (event_id, scope, amendment_id, expected_cap, new_cap,
+                          authorization_source))
+            self._verify_scope(conn, after)
+            return self._view(after)
 
     def balances(self, scope):
         _text(scope, "scope")

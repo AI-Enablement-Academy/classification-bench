@@ -1,0 +1,32 @@
+{
+  "configs": [
+    {
+      "id": "synthetic-first",
+      "model": "synthetic-only",
+      "settings": {
+        "adapter": "synthetic",
+        "response_mode": "first_label"
+      }
+    },
+    {
+      "id": "synthetic-invalid",
+      "model": "synthetic-only",
+      "settings": {
+        "adapter": "synthetic",
+        "response_mode": "invalid"
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "baseline",
+      "text": "Classify only the supplied feedback. Use the declared labels. Sentiment describes the expressed experience; follow_up_needed means an explicit unresolved request; serious_concern_reported means alleged serious misconduct such as credential theft; testimonial_potential means clear positive feedback suitable for a testimonial subject to consent. Use insufficient_information when a decision lacks evidence. These are fictional software examples, not hiring policy."
+    },
+    {
+      "id": "explicit",
+      "text": "Classify only the supplied feedback. Use the declared labels. Sentiment describes the expressed experience; follow_up_needed means an explicit unresolved request; serious_concern_reported means alleged serious misconduct such as credential theft; testimonial_potential means clear positive feedback suitable for a testimonial subject to consent. Use insufficient_information when a decision lacks evidence. These are fictional software examples, not hiring policy. Check every field against the text before returning the classification."
+    }
+  ],
+  "repeats": 3,
+  "batch_size": 2
+}

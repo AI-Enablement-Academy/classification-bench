@@ -1,0 +1,23 @@
+{
+  "name": "fictional-product-fit",
+  "input_keys": [
+    "description",
+    "audience"
+  ],
+  "fields": [
+    {
+      "name": "segment",
+      "labels": [
+        "teams",
+        "solo"
+      ]
+    },
+    {
+      "name": "urgency",
+      "labels": [
+        "now",
+        "later"
+      ]
+    }
+  ]
+}
