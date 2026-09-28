@@ -33,3 +33,7 @@ The user subsequently supplied eight copied report views, four for each fixture.
 Every view retains the whole-experiment totals: 36 positions, 18 valid, 18 invalid, zero missing. Provenance hashes remain identical within each four-view sequence. The expanded rows include input text, references, predictions and outcome labels. This verifies the demonstrated filtering and expansion through user-supplied browser text, not direct agent browser observation. It does not prove visual readability, reset-to-All behavior, collapse behavior or interactions with the other five selectors.
 
 Exact supplied text and SHA-256 digests are archived privately under `private-data/operator-check-20260928/user-pasted-views/`. Layout inspection and live verification of the updated adapter identity path remain pending. The earlier browser limitation describes the initial agent inspection, before these additional user-supplied views.
+
+## User visual confirmation
+
+The user confirmed both reports looked good and were readable, while explicitly distinguishing that result from an absence of UI/UX improvement opportunities. Combined with the supplied filtered and expanded report text, this provides user-observed layout and interaction evidence. The agent did not directly inspect rendered pixels. Reset/collapse and the remaining selector combinations were not separately demonstrated. Live verification of the updated adapter identity path is still pending.
