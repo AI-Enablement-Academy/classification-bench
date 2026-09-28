@@ -2,6 +2,8 @@
 
 Status: the operator authorized the three-request smoke on 2026-09-28 with a $0.50 cap and pause at exhaustion, then explicitly authorized a repository-local ignored `.env` populated with only the OpenRouter key from the parent codebuild environment file. No key is tracked or embedded in code. The first dispatch attempt returned no response bytes (`URLError`) and is retained as unknown with a $0.104963 hold. The two later records were initially never sent, then executed once in a separately bound continuation after the transport correction and review. Both returned HTTP 200; strict offline re-evaluation preserves one malformed JSON output and one out-of-vocabulary label. Rounded charges are $0.000139, with the original hold unchanged. No approved request positions remain. See [live smoke evidence](LIVE_SMOKE_RESULT.md) for the current result and aggregate budget accounting.
 
+A separately authorized product follow-up now verifies the current identity adapter: [results and limitations](LIVE_IDENTITY_SMOKE_RESULT.md). The original proposal below remains historical.
+
 ## Concrete proposal
 
 Use the three fictional records in [the candidate fixture](../examples/candidate/inputs.json), its baseline rubric, one repeat and batch size one. Route `openai/gpt-4.1-nano` through the exact OpenRouter `openai` endpoint, temperature zero, at most 512 output tokens. Disable fallback, response repair and automatic inference retry, and request response-cache bypass. Provider-side prompt caching is a separate mechanism; record returned cache usage rather than asserting it was disabled. Provider concurrency and run concurrency are both one.
