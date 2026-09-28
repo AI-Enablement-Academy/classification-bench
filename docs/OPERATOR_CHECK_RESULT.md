@@ -1,0 +1,22 @@
+# Independent operator check: 2026-09-28
+
+At the user's request, two separate subagents performed the [operator checklist](OPERATOR_CHECK.md) against commit `4613b8f249db347b2203478647455ac116d1d1b0`. One ran the workflow; the other inspected the generated report artifacts. This was independent agent verification, not human inspection. Python was 3.14.6 on macOS 26.6 arm64. No browser was used and no provider calls or credentials were involved.
+
+## Workflow: passed
+
+Both fictional demos completed 24 of 24 requests and retained 36 classification positions: 18 valid, 18 deliberately invalid, zero missing. The candidate rerun preserved all request IDs and left the database at 24 unique attempts. Recovery returned no recovered or unresolved work; final status remained completed. Both databases contain 24 requests, attempts, receipts and observations, with matching receipt/attempt identities. Every documented command exited successfully.
+
+## Report artifacts: passed; browser inspection pending
+
+The independent static review found no confirmed defect. Both reports retain the full denominator, separate invalid outcomes from valid disagreement, and contain all seven filter selectors with matching section attributes and options. Each includes 4 condition articles, 12 pass sections, 12 supporting-case blocks and 6 inline charts. Empty measurements display `unavailable`. Scripts are inline and require no external resources.
+
+Review verdict: **APPROVE for static report inspection**. **RESIDUAL:** rendered readability, filter clicks and opening case details remain unverified because the browser tool denied local-file access. No alternate access route was used. Static verification does not close the browser interaction gate.
+
+The private evidence archive is `private-data/operator-check-20260928/`, ignored by Git. It contains command output, the verification summary, both run directories and a SHA-256 manifest. Original absolute paths remain in saved configs to preserve their bindings; the copies are evidence, not portable run configurations.
+
+Report SHA-256 values:
+
+- Candidate: `e165a0e653ee333579175bf0cb35ed742b5fe4c7a276b3e1d30b62cf00f18613`
+- Product: `dc369239560b50a6c512a7f379162a37100a31c5aceed60871387cce36e0c1d1`
+
+Independent operator execution is verified. Browser inspection and live verification of the updated adapter identity path remain separate, pending release checks.

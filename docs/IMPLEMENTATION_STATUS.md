@@ -1,6 +1,6 @@
 # Implementation status: 2026-09-28
 
-The first runner and report are implemented and offline verified. The authorized smoke has partial live evidence, documented below. The release is not complete: live verification and a human second-operator handoff remain pending. The repository is private; the active candidate-experience benchmark was not edited or rerun.
+The first runner and report are implemented and offline verified. The authorized smoke has partial live evidence, documented below. The release is not complete: live verification and browser report inspection remain pending. Independent subagent operator reproduction passed; see [operator results](OPERATOR_CHECK_RESULT.md). The repository is private; the active candidate-experience benchmark was not edited or rerun.
 
 ## Verified locally
 
@@ -33,6 +33,6 @@ The [authorized three-request smoke](LIVE_SMOKE_RESULT.md) produced one unknown 
 
 Observed rounded ledger charges are $0.000139, and the unresolved original hold is $0.104963: total accounted exposure $0.105102. A corrected parser recognizes the exact `OpenAI` display name for the pinned `openai` route. Versioned offline re-evaluation still finds both outputs invalid (malformed JSON and an out-of-vocabulary label), preserving the original observations and complete missing/invalid denominators. No retries or new repeats were made.
 
-Authentication, serving, saved raw evidence, charge settlement and private report generation have live evidence. Both initial generation lookups returned 404. Later read-only lookups returned matching response IDs, provider and charges, but a dated model identifier different from the requested alias; the strict identity check rejects that mismatch. The new metadata and timing are archived separately without changing the original reports or ledger. Browser rendering and a second human operator's reproduction also remain pending; [OPERATOR_CHECK.md](OPERATOR_CHECK.md) provides the concrete offline handoff. The first release is not complete. Further inference needs a new explicit request scope; no approved positions remain.
+Authentication, serving, saved raw evidence, charge settlement and private report generation have live evidence. Both initial generation lookups returned 404. Later read-only lookups returned matching response IDs, provider and charges, but a dated model identifier different from the requested alias; the strict identity check rejects that mismatch. The new metadata and timing are archived separately without changing the original reports or ledger. Browser rendering remains pending; independent operator reproduction passed as recorded in [OPERATOR_CHECK_RESULT.md](OPERATOR_CHECK_RESULT.md); [OPERATOR_CHECK.md](OPERATOR_CHECK.md) provides the concrete offline handoff. The first release is not complete. Further inference needs a new explicit request scope; no approved positions remain.
 
 Use [RUNNER.md](RUNNER.md) for complete commands and [LIVE_SMOKE_PLAN.md](LIVE_SMOKE_PLAN.md) for the approval gate. Historical contract documents describe the checkpoint they introduced; this page records the integrated implementation's current status.

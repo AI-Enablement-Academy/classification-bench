@@ -2,7 +2,7 @@
 
 Current implementation checkpoint: `312a632`, verified on 2026-09-28 in `/Users/adamkovacs/Documents/codebuild/classification-bench`. The private repository is `AI-Enablement-Academy/classification-bench`. The generic matrix runner and local report are implemented, 154 offline tests pass, and the integrated adapter identity change passed independent review. See [implementation status](IMPLEMENTATION_STATUS.md) for verification limits and [operator workflow](RUNNER.md) for commands.
 
-The goal remains [NEXT_TASK_GOAL.md](NEXT_TASK_GOAL.md). Remaining acceptance gates are live validation of the updated identity path, report visual inspection and second-operator reproduction. No additional model calls are scheduled or proposed. The user directed work toward the generic product; the active candidate-experience benchmark remains separate.
+The goal remains [NEXT_TASK_GOAL.md](NEXT_TASK_GOAL.md). Remaining acceptance gates are live validation of the updated identity path, report visual inspection. Independent subagent reproduction passed; see [operator results](OPERATOR_CHECK_RESULT.md). No additional model calls are scheduled or proposed. The user directed work toward the generic product; the active candidate-experience benchmark remains separate.
 
 ## Ownership
 
