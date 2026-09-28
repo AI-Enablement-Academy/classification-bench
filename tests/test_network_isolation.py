@@ -10,10 +10,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from classification_bench.adapter_runtime import OpenRouterRuntime
 from classification_bench.adapters import OpenRouterAdapter, PreparedRequest
 from classification_bench.isolation import IsolationError, IsolationUnavailable, WorkerResult
 from classification_bench.network_isolation import (
-    NetworkSandboxedPythonWorker, isolated_dispatch, isolated_lookup_generation,
+    NetworkSandboxedPythonWorker, _exact_https_runtime_files,
+    isolated_dispatch, isolated_lookup_generation,
 )
 
 
@@ -65,6 +67,30 @@ class NetworkIsolationTests(unittest.TestCase):
         self.assertFalse(worker.path.exists())
         self.assertIn("_adapter.lookup_generation", worker.source)
 
+    def test_live_preflight_then_dispatch_has_no_second_public_probe(self):
+        worker = NetworkSandboxedPythonWorker()
+        probes = []
+
+        def prove_once():
+            probes.append("public HTTPS GET")
+            if len(probes) > 1:
+                raise IsolationUnavailable("transient public catalog failure")
+            return {"public_https": True}
+
+        response = {"raw_bytes": base64.b64encode(b'{"id":"fixture"}').decode(),
+                    "http_status": 200, "duration_ms": 1,
+                    "error": None, "redacted": False, "truncated": False}
+        runtime = OpenRouterRuntime()
+        with patch.object(worker, "probe", side_effect=prove_once), patch.object(
+                worker, "_launch", return_value=WorkerResult(json.dumps(response).encode(), b"", 0)) as launch, patch.object(
+                OpenRouterAdapter, "verify_live_snapshot", return_value={"catalog_sha256": "a" * 64}):
+            source = runtime.preflight(self.adapter, self.prepared, worker)
+            result = runtime.dispatch(self.adapter, self.prepared, "fixture-secret", worker)
+        self.assertIn("catalog:" + "a" * 64, source)
+        self.assertEqual(result.raw_bytes, b'{"id":"fixture"}')
+        self.assertEqual(probes, ["public HTTPS GET"])
+        self.assertEqual(launch.call_count, 1)
+
     def test_malformed_child_evidence_fails_closed_and_cleans_capsule(self):
         worker = RecordingWorker(output={"raw_bytes": "not-base64", "http_status": 200,
                                          "duration_ms": 1, "error": None,
@@ -82,20 +108,88 @@ class NetworkIsolationTests(unittest.TestCase):
                 profile = worker._profile(capsule)
         self.assertIn('(remote tcp "*:443")', profile)
         self.assertIn('(remote udp "*:53")', profile)
+        self.assertIn('(remote tcp "*:53")', profile)
+        self.assertIn('(allow file-read-metadata (literal "/var"))', profile)
+        self.assertIn('(allow network-outbound (literal "/private/var/run/mDNSResponder"))', profile)
         self.assertIn("(deny default)", profile)
         self.assertNotIn('(subpath "/Users")', profile)
+        self.assertNotIn('(subpath "/opt/homebrew")', profile)
         self.assertNotIn("classification-bench", profile)
+
+    def test_profile_grants_only_exact_tls_cert_and_resolver_files(self):
+        worker = NetworkSandboxedPythonWorker()
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+            capsule = Path(temp) / "capsule"
+            capsule.write_bytes(b"fixture")
+            with patch.object(worker, "_require_host"):
+                profile = worker._profile(capsule)
+        for path in _exact_https_runtime_files():
+            self.assertIn(f'(literal "{path}")', profile)
+            self.assertNotIn(f'(subpath "{path}")', profile)
+        if Path("/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib").is_file():
+            self.assertIn('(literal "/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib")', profile)
+            self.assertIn('(literal "/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib")', profile)
+        self.assertNotIn('(subpath "/opt/homebrew/Cellar")', profile)
+
+    def test_parent_ca_environment_cannot_grant_reference_file(self):
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+            secret = Path(temp) / "reference"
+            secret.write_bytes(b"reference data")
+            with patch.dict(os.environ, {"SSL_CERT_FILE": str(secret)}):
+                paths = _exact_https_runtime_files()
+                worker = NetworkSandboxedPythonWorker()
+                capsule = Path(temp) / "capsule"
+                capsule.write_bytes(b"fixture")
+                with patch.object(worker, "_require_host"):
+                    profile = worker._profile(capsule)
+        self.assertNotIn(str(secret), paths)
+        self.assertNotIn(f'(literal "{secret}")', profile)
+
+    def test_preflight_requires_default_ca_dns_and_public_https_before_admission(self):
+        worker = NetworkSandboxedPythonWorker()
+        base = {"capsule": "allowlisted-capsule", "reference": 1, "symlink": 1,
+                "network": 61, "ca_count": 100, "dns_resolved": True,
+                "public_https": True,
+                "environment_keys": ["LANG", "LC_ALL", "PYTHONIOENCODING"]}
+        sources = []
+
+        def launch(_capsule, source):
+            sources.append(source)
+            return WorkerResult(json.dumps(base).encode(), b"", 0)
+
+        with patch.object(worker, "_require_host"), patch.object(worker, "_launch", side_effect=launch):
+            proof = worker.probe()
+        self.assertTrue(proof["default_ca_loaded"] and proof["dns_resolved"] and proof["public_https"])
+        self.assertIn("ssl.create_default_context()", sources[0])
+        self.assertIn("socket.getaddrinfo('openrouter.ai'", sources[0])
+        self.assertIn("https://openrouter.ai/api/v1/models", sources[0])
+        self.assertTrue(sources[0].startswith("REQUIRE_HTTPS = True\n"))
+        self.assertNotIn("chat/completions", sources[0])
+        for field, value in (("ca_count", 0), ("dns_resolved", False), ("public_https", False)):
+            broken = {**base, field: value}
+            with patch.object(worker, "_require_host"), patch.object(
+                    worker, "_launch", return_value=WorkerResult(json.dumps(broken).encode(), b"", 0)):
+                with self.assertRaisesRegex(IsolationUnavailable, "required HTTPS"):
+                    worker.probe()
+        offline = {**base, "dns_resolved": False, "public_https": False}
+        with patch.object(worker, "_require_host"), patch.object(
+                worker, "_launch", return_value=WorkerResult(json.dumps(offline).encode(), b"", 0)) as launch:
+            proof = worker.probe(require_https=False)
+        self.assertTrue(proof["default_ca_loaded"])
+        self.assertFalse(proof["dns_resolved"] or proof["public_https"])
+        self.assertTrue(launch.call_args.args[1].startswith("REQUIRE_HTTPS = False\n"))
 
     def test_real_network_profile_proves_reference_symlink_and_environment_denial(self):
         if platform.system() != "Darwin":
             self.skipTest("real sandbox-exec preflight requires macOS")
         try:
-            proof = NetworkSandboxedPythonWorker().probe()
+            proof = NetworkSandboxedPythonWorker().probe(require_https=False)
         except IsolationUnavailable as exc:
             self.skipTest(f"sandbox unavailable in enclosing runtime: {exc}")
         self.assertTrue(all(proof[key] for key in
                             ("capsule_read", "reference_denied", "symlink_denied",
-                             "tcp_443_allowed", "environment_scrubbed")))
+                             "tcp_443_allowed", "environment_scrubbed",
+                             "default_ca_loaded")))
 
 
 if __name__ == "__main__":

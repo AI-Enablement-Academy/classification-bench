@@ -9,6 +9,7 @@ import errno
 import json
 import os
 from pathlib import Path
+import ssl
 import tempfile
 
 from .adapters import OpenRouterAdapter, PreparedRequest, TransportResult
@@ -19,6 +20,28 @@ from .isolation import (IsolationError, IsolationUnavailable, SandboxedPythonWor
 _CERT_PATHS = ("/etc/ssl", "/private/etc/ssl")
 _DNS_FILES = ("/etc/resolv.conf", "/private/etc/resolv.conf",
               "/etc/hosts", "/private/etc/hosts")
+_HOMEBREW_TLS_LIBRARIES = (
+    "/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib",
+    "/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib",
+)
+
+
+def _exact_https_runtime_files():
+    """Return file aliases and real targets, never a Homebrew subtree grant."""
+    paths = set()
+    defaults = ssl.get_default_verify_paths()
+    # The child has a scrubbed environment. Use OpenSSL's compiled default,
+    # never a parent SSL_CERT_FILE override that could name reference data.
+    candidates = [*(_HOMEBREW_TLS_LIBRARIES), defaults.openssl_cafile,
+                  *(_DNS_FILES)]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path.is_file():
+            paths.add(str(path))
+            paths.add(str(path.resolve()))
+    return paths
 
 
 class NetworkSandboxedPythonWorker(SandboxedPythonWorker):
@@ -30,20 +53,25 @@ class NetworkSandboxedPythonWorker(SandboxedPythonWorker):
     def _profile(self, capsule):
         base = super()._profile(capsule)
         literals = set()
-        for path in (*_CERT_PATHS, *_DNS_FILES):
+        for path in (*_CERT_PATHS, *_exact_https_runtime_files()):
             literals |= _ancestors(path)
         rules = " ".join(_literal(path) for path in sorted(literals))
         certs = " ".join(_subpath(path) for path in _CERT_PATHS)
         return (base + f"(allow file-read* {rules} {certs})"
+                '(allow file-read-metadata (literal "/var"))'
+                '(allow network-outbound (literal "/private/var/run/mDNSResponder"))'
                 '(allow network-outbound (remote tcp "*:443"))'
                 '(allow network-outbound (remote udp "*:53"))'
+                '(allow network-outbound (remote tcp "*:53"))'
                 '(allow mach-lookup (global-name "com.apple.mDNSResponder"))')
 
-    def probe(self):
-        """Prove file denials and port-443 allowance under this exact profile."""
+    def probe(self, *, require_https=True):
+        """Prove the OS boundary; live admissions also require public HTTPS."""
+        if type(require_https) is not bool:
+            raise IsolationError("require_https must be a boolean")
         self._require_host()
-        source = r'''
-import json, os, socket, sys
+        source = f"REQUIRE_HTTPS = {require_https}\n" + r'''
+import json, os, socket, ssl, sys, urllib.request
 root = os.path.dirname(sys.argv[1])
 def read(path):
     try:
@@ -54,10 +82,24 @@ def read(path):
 with socket.socket() as client:
     client.settimeout(1)
     network = client.connect_ex(('127.0.0.1', 443))
+context = ssl.create_default_context()
+ca_count = len(context.get_ca_certs())
+dns_resolved = False
+public_https = False
+if REQUIRE_HTTPS:
+    resolved = socket.getaddrinfo('openrouter.ai', 443, type=socket.SOCK_STREAM)
+    dns_resolved = bool(resolved)
+    request = urllib.request.Request('https://openrouter.ai/api/v1/models',
+                                     headers={'Accept': 'application/json'})
+    with urllib.request.urlopen(request, timeout=8, context=context) as response:
+        public_https = response.status == 200 and bool(response.read(1))
 print(json.dumps({'capsule': read(sys.argv[1]),
                   'reference': read(os.path.join(root, 'reference')),
                   'symlink': read(os.path.join(root, 'reference-link')),
                   'network': network,
+                  'ca_count': ca_count,
+                  'dns_resolved': dns_resolved,
+                  'public_https': public_https,
                   'environment_keys': sorted(os.environ)}))
 '''
         with tempfile.TemporaryDirectory(prefix="classification-network-probe-", dir="/private/tmp") as temp:
@@ -68,7 +110,10 @@ print(json.dumps({'capsule': read(sys.argv[1]),
             (root / "reference-link").symlink_to(root / "reference")
             result = self._launch(capsule, source)
         if result.returncode != 0:
-            raise IsolationUnavailable(f"network sandbox preflight child failed with status {result.returncode}")
+            detail = result.stderr.decode("utf-8", errors="replace")[-600:].strip()
+            raise IsolationUnavailable(
+                f"network sandbox preflight child failed with status {result.returncode}"
+                + (f": {detail}" if detail else ""))
         try:
             observation = json.loads(result.stdout)
         except (UnicodeError, json.JSONDecodeError) as exc:
@@ -77,10 +122,34 @@ print(json.dumps({'capsule': read(sys.argv[1]),
                 observation.get("reference") not in (errno.EPERM, errno.EACCES) or
                 observation.get("symlink") not in (errno.EPERM, errno.EACCES) or
                 observation.get("network") not in (0, errno.ECONNREFUSED) or
+                type(observation.get("ca_count")) is not int or observation["ca_count"] < 1 or
+                (require_https and observation.get("dns_resolved") is not True) or
+                (require_https and observation.get("public_https") is not True) or
                 observation.get("environment_keys") != ["LANG", "LC_ALL", "PYTHONIOENCODING"]):
-            raise IsolationUnavailable("network sandbox preflight did not prove required allow/deny behavior")
+            raise IsolationUnavailable("network sandbox preflight did not prove required HTTPS and allow/deny behavior")
         return {"platform": "Darwin", "capsule_read": True, "reference_denied": True,
-                "symlink_denied": True, "tcp_443_allowed": True, "environment_scrubbed": True}
+                "symlink_denied": True, "tcp_443_allowed": True, "environment_scrubbed": True,
+                "default_ca_loaded": True,
+                "dns_resolved": observation.get("dns_resolved") is True,
+                "public_https": observation.get("public_https") is True}
+
+    def run(self, capsule_path, trusted_source):
+        """Launch under the same OS profile after the caller's pre-grant probe.
+
+        The matrix runner calls ``probe()`` immediately before durable
+        admission. A second destination GET here would occur after admission
+        and could create an unknown hold without attempting the paid POST.
+        ``_launch`` still applies the deny-by-default sandbox to this child.
+        """
+        capsule = self._capsule(capsule_path)
+        if (capsule.is_relative_to(self.runtime_root) or
+                capsule.is_relative_to(self.runtime_alias) or
+                capsule.is_relative_to(Path("/System"))):
+            raise IsolationError("capsule cannot reside inside an allowed runtime")
+        result = self._launch(capsule, trusted_source)
+        if result.returncode != 0:
+            raise IsolationError(f"sandboxed worker exited with status {result.returncode}")
+        return result
 
 
 _CHILD_SUFFIX = r'''

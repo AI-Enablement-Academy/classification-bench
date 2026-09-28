@@ -1,6 +1,6 @@
 # Proposed first live smoke
 
-Status: the operator authorized this three-request smoke on 2026-09-28 with a $0.50 cap and pause at exhaustion. A private run-bound authorization file has been recorded and verified. Dispatch is pending an operator-supplied credential; `OPENROUTER_API_KEY` was absent from the execution environment. Current public endpoint and OS-isolation preflight checks passed. No inference has been dispatched. The adapter and runner have offline tests. No successful live authentication, serving, route observation or billing has been demonstrated. The candidate-experience source study and its budgets remain separate.
+Status: the operator authorized the three-request smoke on 2026-09-28 with a $0.50 cap and pause at exhaustion, then explicitly authorized a repository-local ignored `.env` populated with only the OpenRouter key from the parent codebuild environment file. No key is tracked or embedded in code. The first dispatch attempt returned no response bytes (`URLError`) and is retained as unknown with a $0.104963 hold. The two later records were never sent. Credential-free diagnostics found missing TLS runtime and DNS sandbox grants; the corrected preflight must pass before continuation. See [live smoke evidence](LIVE_SMOKE_RESULT.md) for the current result and aggregate budget accounting.
 
 ## Concrete proposal
 

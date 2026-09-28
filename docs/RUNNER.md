@@ -92,3 +92,17 @@ The live adapter uses a tested macOS file boundary with scrubbed environment. It
 The report usage mapping follows the [OpenRouter chat response schema](https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion) and [cache-token documentation](https://openrouter.ai/docs/guides/best-practices/prompt-caching). Provider generation time, client duration and pure inference time remain separate measures.
 
 Runtime extensions and historical read compatibility follow the [adapter runtime contract](ADAPTER_RUNTIME.md). Saved reports use stored execution routes and build hashes; new dispatch fails closed when those builds change.
+
+
+## Local credential setup
+
+Use the repository-local `.env` for `OPENROUTER_API_KEY`; `.gitignore` excludes it. Keep its permissions at `0600`. The tracked `.env.example` contains no credential. The CLI reads the process environment, so load your trusted local file before an authorized run:
+
+```sh
+set -a
+. ./.env
+set +a
+python3 -m classification_bench run --config /path/to/approved/config.json
+```
+
+Do not enable shell tracing while loading credentials. Never put a key in command arguments, run configuration, reports or commits. Loading `.env` does not grant spending authorization; the separate run-bound grant and selected budget still apply.
