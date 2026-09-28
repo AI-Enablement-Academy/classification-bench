@@ -2,7 +2,7 @@
 
 A reusable benchmark core for categorical classification tasks: define the task, compare prompts and model configurations, and measure both agreement and repeatability.
 
-**Current status: matrix runner and local report implemented and offline tested; live smoke authorized, pending credential setup.** The runner previews exact work, runs independent configurations under one shared ledger, preserves uncertain attempts, and supports user-selected budget pause or stop. The first OpenRouter adapter is implemented but has not been live verified. Synthetic examples test the software, not model quality or nondeterminism.
+**Current status: matrix runner and local report implemented and offline tested; authorized smoke attempted; live verification remains incomplete.** The runner previews exact work, runs independent configurations under one shared ledger, preserves uncertain attempts, and supports user-selected budget pause or stop. The OpenRouter adapter captured two live responses and charges after a sandbox correction; one earlier attempt remains unknown and both returned outputs failed strict validation. See the [smoke evidence](docs/LIVE_SMOKE_RESULT.md). Synthetic examples test the software, not model quality or nondeterminism.
 
 Start with the [operator workflow](docs/RUNNER.md), [configurable smoke plan](docs/LIVE_SMOKE_PLAN.md) and [implementation status](docs/IMPLEMENTATION_STATUS.md).
 

@@ -455,7 +455,8 @@ class OpenRouterAdapter:
         provider = value.get("provider") if isinstance(value.get("provider"), str) else None
         if model != expected_model or model != self.model:
             reason = "returned model mismatch"
-        elif provider is not None and provider != self.provider:
+        elif (provider is not None and provider != self.provider and
+              (self.provider, provider) != ("openai", "OpenAI")):
             reason = "returned provider mismatch"
         else:
             reason = None

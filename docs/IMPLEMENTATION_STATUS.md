@@ -1,10 +1,10 @@
 # Implementation status: 2026-09-28
 
-The first runner and report are implemented and offline verified. The release is not complete: live verification and a human second-operator handoff remain pending. The repository is private; the active candidate-experience benchmark was not edited or rerun.
+The first runner and report are implemented and offline verified. The authorized smoke has partial live evidence, documented below. The release is not complete: live verification and a human second-operator handoff remain pending. The repository is private; the active candidate-experience benchmark was not edited or rerun.
 
 ## Verified locally
 
-`python3 -m unittest discover -s tests -v` passed **143 tests with no skips** on macOS after running outside the enclosing development sandbox. The original baseline passed 78 tests. The expanded suite includes actual reference/symlink denials and environment scrubbing under both offline and HTTPS-enabled profiles, crash/receipt recovery, atomic shared budgets and cap-amendment races, mocked HTTP errors/partial bodies and identity checks, matrix ordering and process locking, pause/stop/top-up behavior, immutable report snapshots, and subprocess reproduction of both fictional task workflows.
+`python3 -m unittest discover -s tests -v` passed **148 tests with no skips** on macOS after running outside the enclosing development sandbox. The original baseline passed 78 tests. The expanded suite includes actual reference/symlink denials and environment scrubbing under both offline and HTTPS-enabled profiles, crash/receipt recovery, atomic shared budgets and cap-amendment races, mocked HTTP errors/partial bodies and identity checks, matrix ordering and process locking, pause/stop/top-up behavior, immutable report snapshots, and subprocess reproduction of both fictional task workflows.
 
 The fictional candidate and product demos each complete 24 synthetic requests, retaining all 36 planned positions. Re-running a completed matrix preserves its request count. Generated reports are private local HTML files with mode 0600. Browser visual inspection was blocked by the browser tool's local-file URL policy; HTML generation, escaping, report calculations, filter code and supporting cases have automated tests, but visual rendering is unverified.
 
@@ -25,8 +25,10 @@ The live child permits TCP443 and DNS under an OS file boundary. The trusted HTT
 
 ## Pending gates
 
-The [three-request smoke](LIVE_SMOKE_PLAN.md) was explicitly authorized on 2026-09-28 at a $0.50 cap with pause at exhaustion. Its run-bound authorization file is verified; execution is pending an operator-supplied credential because the environment variable is absent. Public endpoint and OS-isolation preflight passed. The cap is configurable; the observed catalog yields $0.314889 in summed conservative reservations. Only public endpoint metadata was fetched. Only credential availability was checked, without exposing any value. No model request, credential transfer, public deployment or dataset publication occurred.
+The [authorized three-request smoke](LIVE_SMOKE_RESULT.md) produced one unknown transport attempt and two HTTP 200 responses after a reviewed sandbox correction. A private, ignored repository `.env` contains only the operator-authorized OpenRouter key. It is not tracked or embedded in code. Two separately archived run definitions preserve the original runtime identity and the never-sent suffix; the suffix cap subtracts the first hold from the approved $0.50 total.
 
-The following remain unverified: live serving and authentication, actual returned model/provider evidence, provider billing and timing behavior, browser rendering, and a second human operator's reproduction. Missing generation metadata is explicitly unverified, not silently inferred from the requested route. An observed completion charge may settle independently; missing or conflicting charge evidence retains a hold.
+Observed rounded ledger charges are $0.000139, and the unresolved original hold is $0.104963: total accounted exposure $0.105102. A corrected parser recognizes the exact `OpenAI` display name for the pinned `openai` route. Versioned offline re-evaluation still finds both outputs invalid (malformed JSON and an out-of-vocabulary label), preserving the original observations and complete missing/invalid denominators. No retries or new repeats were made.
+
+Authentication, serving, saved raw evidence, charge settlement and private report generation have live evidence. Both generation lookups returned 404; provider metadata and timing remain unverified. Browser rendering and a second human operator's reproduction also remain pending. The first release is not complete. Further inference needs a new explicit request scope; no approved positions remain.
 
 Use [RUNNER.md](RUNNER.md) for complete commands and [LIVE_SMOKE_PLAN.md](LIVE_SMOKE_PLAN.md) for the approval gate. Historical contract documents describe the checkpoint they introduced; this page records the integrated implementation's current status.

@@ -263,6 +263,24 @@ class OpenRouterTests(unittest.TestCase):
         self.assertEqual(parsed.reason, "returned provider mismatch")
         self.assertEqual(parsed.observed_cost_microusd, 21)
 
+    def test_openai_display_name_is_valid_for_pinned_openai_nano_route(self):
+        config, _, _, _ = fixture()
+        config["model"] = "openai/gpt-4.1-nano"
+        config["settings"]["provider"] = "openai"
+        snapshot = config["settings"]["endpoint_snapshot"]
+        snapshot["model_id"] = config["model"]
+        snapshot["provider_tag"] = "openai"
+        snapshot["source_url"] = "https://openrouter.ai/api/v1/models/openai/gpt-4.1-nano/endpoints"
+        adapter = self.adapter(config)
+        response = json.loads(completion(model="openai/gpt-4.1-nano"))
+        response["provider"] = "OpenAI"
+        parsed = adapter.parse(TransportResult(json.dumps(response).encode(), 200, 1),
+                               expected_request_id="request-1", expected_ids=("a",),
+                               expected_model="openai/gpt-4.1-nano")
+        self.assertEqual(parsed.status, "valid")
+        self.assertEqual(parsed.provider, "OpenAI")
+        self.assertEqual(parsed.observed_cost_microusd, 21)
+
 
 if __name__ == "__main__":
     unittest.main()
