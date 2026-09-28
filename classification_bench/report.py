@@ -26,10 +26,20 @@ def _number(value, unit=""):
     return f"{value:,.3f}{unit}" if isinstance(value, float) else f"{value:,}{unit}"
 
 
-def _table(headers, rows):
+def _table(headers, rows, *, caption=None, row_header=False, numeric_columns=(), class_name=None):
     head = "".join(f"<th scope='col'>{_h(x)}</th>" for x in headers)
-    body = "".join("<tr>" + "".join(f"<td>{_h(x)}</td>" for x in row) + "</tr>" for row in rows)
-    return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+    body = ""
+    for row in rows:
+        cells = ""
+        for index, value in enumerate(row):
+            tag = "th" if row_header and index == 0 else "td"
+            scope = " scope='row'" if tag == "th" else ""
+            numeric = " class='numeric'" if index in numeric_columns else ""
+            cells += f"<{tag}{scope}{numeric}>{_h(value)}</{tag}>"
+        body += f"<tr>{cells}</tr>"
+    label = f"<caption>{_h(caption)}</caption>" if caption else ""
+    table_class = f" class='{class_name}'" if class_name else ""
+    return f"<table{table_class}>{label}<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
 
 _MEASUREMENTS = ("duration_seconds", "provider_generation_seconds", "pure_inference_seconds",
@@ -261,6 +271,11 @@ def _operation_summary(records, planned_count, currency):
     ):
         values = [r.get(key) for r in records if r.get(key) is not None]
         cells.append((label, f"{_number(sum(values) / len(values), unit)} mean across {len(values)} request(s)" if values else "unavailable"))
+    distinct_charge_currencies = {_cost_currency(r, currency) for r in records
+                                  if r.get("observed_cost_micro_usd") is not None}
+    distinct_hold_currencies = {_cost_currency(r, currency) for r in records
+                                if r.get("unresolved_hold_micro_usd") is not None}
+    charge_currency = next(iter(distinct_charge_currencies), currency) if len(distinct_charge_currencies) <= 1 else currency
     for key, label in (
         ("input_tokens", "Input tokens"), ("output_tokens", "Output tokens"),
         ("reasoning_tokens", "Reasoning tokens"), ("cache_tokens", "Cache tokens"),
@@ -268,12 +283,30 @@ def _operation_summary(records, planned_count, currency):
         ("estimated_cost_micro_usd", "Pricing estimates"),
         ("unresolved_hold_micro_usd", "Unresolved budget holds"),
     ):
-        values = [r.get(key) for r in records if r.get(key) is not None]
-        suffix = f" {currency}" if key.endswith("micro_usd") else ""
-        if key == "observed_cost_micro_usd" and currency == "SYN units":
+        if key == "observed_cost_micro_usd" and charge_currency == "SYN units" and len(distinct_charge_currencies) <= 1:
             label = "Observed synthetic accounting"
+        if key == "observed_cost_micro_usd" and len(distinct_charge_currencies) > 1:
+            for unit in sorted(distinct_charge_currencies):
+                values = [r[key] for r in records if r.get(key) is not None and _cost_currency(r, currency) == unit]
+                cells.append((f"Observed charges ({unit})",
+                              f"{_number(sum(values), ' ' + unit)} across {len(values)} request(s)"))
+            continue
+        if key == "unresolved_hold_micro_usd" and len(distinct_hold_currencies) > 1:
+            for unit in sorted(distinct_hold_currencies):
+                values = [r[key] for r in records if r.get(key) is not None and _cost_currency(r, currency) == unit]
+                cells.append((f"Unresolved budget holds ({unit})",
+                              f"{_number(sum(values), ' ' + unit)} across {len(values)} request(s)"))
+            continue
+        values = [r.get(key) for r in records if r.get(key) is not None]
+        unit = (charge_currency if key == "observed_cost_micro_usd" else
+                next(iter(distinct_hold_currencies), currency) if key == "unresolved_hold_micro_usd" else
+                "micro USD" if key == "estimated_cost_micro_usd" and values else currency)
+        suffix = f" {unit}" if key.endswith("micro_usd") else ""
         cells.append((label, f"{_number(sum(values), suffix)} across {len(values)} request(s)" if values else "unavailable"))
-    subscription = "Synthetic accounting is not a provider charge." if currency == "SYN units" else "Subscription cost: unavailable."
+    if len(distinct_charge_currencies) > 1:
+        subscription = "Recorded cost units vary by request; SYN units are not provider charges. Subscription cost: unavailable."
+    else:
+        subscription = "Synthetic accounting is not a provider charge." if charge_currency == "SYN units" else "Subscription cost: unavailable."
     identity_rows = [(r['request_id'], r.get('model') or 'unavailable',
                       r.get('returned_model') or 'unavailable',
                       r.get('frozen_canonical_model') or 'unavailable',
@@ -282,26 +315,33 @@ def _operation_summary(records, planned_count, currency):
                       r.get('returned_provider') or 'unavailable',
                       r.get('provider_identity_status') or 'unavailable',
                       r.get('receipt_sha256') or 'unavailable') for r in records]
+    mixed_charges = len(distinct_charge_currencies) > 1
     telemetry_rows = [
         (r["request_id"], _number(r.get("input_tokens")), _number(r.get("output_tokens")),
          _number(r.get("reasoning_tokens")), _number(r.get("cache_tokens")),
-         _number(r.get("observed_cost_micro_usd")), _number(r.get("estimated_cost_micro_usd")),
+         (_number(r.get("observed_cost_micro_usd"), " " + _cost_currency(r, currency))
+          if mixed_charges else _number(r.get("observed_cost_micro_usd"))),
+         _number(r.get("estimated_cost_micro_usd")),
          r.get("_estimate_basis") or "unavailable", r.get("_snapshot_hash") or "unavailable",
          r.get("_telemetry_note") or "none") for r in records]
     return (f"<p>Request lifecycle: {_h(state_text)}. Parsed outcomes: {_h(parsed_text)}. "
             f"{subscription}</p>") + _table(
-        ("Measure", "Recorded value"), cells) + (
+        ("Measure", "Recorded value"), cells, caption="Request measurement summary") + (
+        "<details class='request-evidence'><summary>Full request identity and telemetry evidence</summary>"
         "<p>Frozen canonical model comes from the enrolled endpoint snapshot. "
         "Generation returned model comes from saved generation metadata. "
         "Unavailable means that evidence did not provide the value.</p>") + _table(
         ("Request ID", "Requested model", "Completion returned model", "Frozen canonical model",
          "Generation returned model", "Requested provider", "Observed provider",
-         "Provider identity evidence", "Verified receipt SHA-256"), identity_rows) + (
+         "Provider identity evidence", "Verified receipt SHA-256"), identity_rows,
+        caption="Request model and provider identity") + (
         "<p>Token detail comes from saved usage. Token-price estimates use the frozen endpoint snapshot at the standard input rate, exclude cache savings, and are separate from observed charges. "
         "Unavailable values are omitted from totals.</p>" + _table(
             ("Request ID", "Input tokens", "Output tokens", "Reasoning tokens", "Cached tokens",
-             f"Observed charge ({currency})", f"Price estimate ({currency})", "Estimate basis or limit",
-             "Endpoint snapshot SHA-256", "Telemetry note"), telemetry_rows))
+             f"Observed charge ({'per request currency' if mixed_charges else charge_currency})",
+             f"Price estimate ({'micro USD' if any(r.get('estimated_cost_micro_usd') is not None for r in records) else currency})", "Estimate basis or limit",
+             "Endpoint snapshot SHA-256", "Telemetry note"), telemetry_rows,
+            caption="Request token and cost telemetry", numeric_columns=(1, 2, 3, 4, 5, 6)) + "</details>")
 
 
 def _observed_outcome(key, invalid, supplied, operation):
@@ -325,6 +365,14 @@ def _observed_outcome(key, invalid, supplied, operation):
     if state in ("dispatch_intent", "outcome_unknown"):
         return "dispatch outcome unknown"
     return "no selected prediction; outcome unavailable"
+
+
+def _cost_currency(operation, fallback):
+    if operation.get("cost_currency") == "SYN" or str(operation.get("route", "")).startswith("synthetic:"):
+        return "SYN units"
+    if operation.get("cost_currency") == "USD":
+        return "micro USD"
+    return fallback
 
 
 def generate_report(task, plan, labels, predictions, operations=None):
@@ -380,6 +428,8 @@ def generate_report(task, plan, labels, predictions, operations=None):
     if sum(outcome_counts.values()) != total:
         raise ValidationError("report outcomes do not cover the planned denominator")
     pages = []
+    contents = []
+    comparison_rows = []
     score_by_pass = {}
     for condition in result["conditions"]:
         cid, pid = condition["config_id"], condition["prompt_id"]
@@ -393,8 +443,10 @@ def generate_report(task, plan, labels, predictions, operations=None):
     if len(prompts) > 1:
         findings.append(f"Prompt effects compare each prompt with {_h(baseline)} within the same configuration and pass.")
 
-    for condition in result["conditions"]:
+    for condition_index, condition in enumerate(result["conditions"]):
         cid, pid = condition["config_id"], condition["prompt_id"]
+        condition_anchor = f"condition-{condition_index}"
+        contents.append(f"<li><a href='#{condition_anchor}'>{_h(cid)} · {_h(pid)}</a></li>")
         config, prompt = configs[cid], prompts[pid]
         settings = config.get("settings", {})
         currency = "SYN units" if (settings.get("adapter") == "synthetic" or
@@ -403,10 +455,14 @@ def generate_report(task, plan, labels, predictions, operations=None):
                                         if request_map[op["request_id"]]["config_id"] == cid)) else "micro USD"
         rows = []
         costs = {}
+        condition_requests = []
+        condition_ops = []
         for entry in condition["passes"]:
             repeat = entry["repeat"]
             requests = [r for r in plan["requests"] if (r["config_id"], r["prompt_id"], r["repeat"]) == (cid, pid, repeat)]
             ops = [_derived_telemetry(o, config) for r in requests for o in operation_map[r["request_id"]]]
+            condition_requests.extend(requests)
+            condition_ops.extend(ops)
             charges = [o["observed_cost_micro_usd"] for o in ops if o.get("observed_cost_micro_usd") is not None]
             costs[repeat] = sum(charges) if charges else None
             metadata = {key: next((o.get(key) for o in ops if o.get(key) is not None), None)
@@ -449,7 +505,9 @@ def generate_report(task, plan, labels, predictions, operations=None):
                 after = entry["all_field_exact"]
                 paired.append(f"Paired prompt effect against {_h(baseline)}: {after - before:+d} exact matches "
                               f"({before}/{entry['denominator']} → {after}/{entry['denominator']}).")
-            rows.append(f"<section class='pass' {attributes}><h3>{_h(cid)} · {_h(pid)} · pass {repeat}</h3>"
+            pass_anchor = f"{condition_anchor}-pass-{repeat}"
+            contents.append(f"<li class='contents-pass'><a href='#{pass_anchor}'>{_h(cid)} · {_h(pid)} · pass {repeat}</a></li>")
+            rows.append(f"<section class='pass' id='{pass_anchor}' {attributes}><h3>{_h(cid)} · {_h(pid)} · pass {repeat}</h3>"
                         f"<p>Requested model: {_h(metadata['model'])}; requested provider: {_h(metadata['provider'] or 'unavailable')}; "
                         f"route: {_h(metadata['route'] or 'unavailable')}; effort: {_h(metadata['effort'] or 'unavailable')}.</p>"
                         "<p>Requested routing is not proof of the serving provider. See observed identity evidence for each request below.</p>"
@@ -458,12 +516,15 @@ def generate_report(task, plan, labels, predictions, operations=None):
                         "Every planned position remains in the denominator. These projection counts are distinct from observed runner outcomes.</p>"
                         + "".join(f"<p>{line}</p>" for line in paired)
                         + "<h4>Observed position outcomes</h4>"
-                        + _table(("Outcome", "Positions", "Planned denominator"), outcome_rows)
+                        + _table(("Outcome", "Positions", "Planned denominator"), outcome_rows,
+                                 caption=f"Observed position outcomes for {cid}, {pid}, pass {repeat}", class_name="outcome-table")
                         + "<h4>Field agreement and class errors</h4>"
-                        + _table(("Field", "Agreement", "Reference class support", "Valid disagreements", "Unscored by reference class"), field_rows)
+                        + _table(("Field", "Agreement", "Reference class support", "Valid disagreements", "Unscored by reference class"), field_rows,
+                                 caption=f"Field agreement for {cid}, {pid}, pass {repeat}", row_header=True, numeric_columns=(1,))
                         + "<h4>Request evidence</h4>" + _operation_summary(ops, len(requests), currency)
                         + "<details><summary>Supporting cases (private input text and references)</summary>"
-                        + _table(("Case", "Output", "Agreement", "Reference", "Prediction", "Input"), case_rows)
+                        + _table(("Case", "Output", "Agreement", "Reference", "Prediction", "Input"), case_rows,
+                                 caption=f"Supporting cases for {cid}, {pid}, pass {repeat}", row_header=True)
                         + "</details></section>")
         comparisons = []
         for comparison in condition["repeat_comparisons"]:
@@ -471,21 +532,47 @@ def generate_report(task, plan, labels, predictions, operations=None):
                                 _rate(comparison["flips"], comparison["comparable"]),
                                 str(comparison["excluded"]), ", ".join(comparison["changed_ids"]) or "none"))
         lo, hi = condition["pass_score_range"]
+        exact = sum(entry["all_field_exact"] for entry in condition["passes"])
+        denominator = sum(entry["denominator"] for entry in condition["passes"])
+        invalid_count = sum(entry["invalid"] for entry in condition["passes"])
+        missing_count = sum(entry["missing"] for entry in condition["passes"])
+        duration_values = [op["duration_seconds"] for op in condition_ops if op.get("duration_seconds") is not None]
+        duration = (f"{_number(sum(duration_values) / len(duration_values), ' s')} mean "
+                    f"({len(duration_values)}/{len(condition_requests)} requests measured)"
+                    if duration_values else f"unavailable (0/{len(condition_requests)} requests measured)")
+        charge_groups = defaultdict(list)
+        for op in condition_ops:
+            charge = op.get("observed_cost_micro_usd")
+            if charge is not None:
+                charge_groups[_cost_currency(op, currency)].append(charge)
+        observed = "; ".join(f"{_number(sum(values))} {unit} ({len(values)}/{len(condition_requests)} requests recorded"
+                             + (", partial recorded total" if len(values) < len(condition_requests) else "") + ")"
+                             for unit, values in sorted(charge_groups.items()))
+        observed = observed or "unavailable"
+        coverage = (f"{sum(map(len, charge_groups.values()))}/{len(condition_requests)} planned requests"
+                    if condition_requests else "0/0 planned requests")
+        comparison_rows.append((cid, pid, _rate(exact, denominator), f"{lo:.1%} to {hi:.1%}",
+                                invalid_count, missing_count, duration, observed, coverage))
         chart_id = f"chart-{len(pages)}"
         baseline_scores = {p["repeat"]: score_by_pass[(cid, baseline, p["repeat"])]
                            for p in condition["passes"]}
         visuals = _score_visual(condition, chart_id + "-score")
         if pid != baseline:
             visuals += _delta_visual(condition, baseline_scores, baseline, chart_id + "-delta")
-        visuals += _cost_visual(condition, costs, chart_id + "-cost", currency)
-        pages.append(f"<article><h2>{_h(cid)} · {_h(pid)}</h2>"
+        if len(charge_groups) <= 1:
+            chart_currency = next(iter(charge_groups), currency)
+            visuals += _cost_visual(condition, costs, chart_id + "-cost", chart_currency)
+        else:
+            visuals += "<p>Observed costs use more than one currency; see the separate per-currency totals above and in each pass.</p>"
+        pages.append(f"<article id='{condition_anchor}'><h2>{_h(cid)} · {_h(pid)}</h2>"
                      f"<p>Prompt: {_h(prompt['text'])}</p>"
                      f"<p>Exact agreement across passes: {lo:.1%} to {hi:.1%}. "
                      "Each pass uses the same input cases; passes are separate dispatches. "
                      "For synthetic outputs, repeated passes show pipeline behavior, not model variability.</p>"
                      "<p>Condition overview below covers all passes, even when a pass filter is selected.</p>"
                      + visuals
-                     + ("<h3>Repeat changes</h3>" + _table(("Passes", "Changed valid cases", "Excluded cases", "Changed case IDs"), comparisons)
+                     + ("<h3>Repeat changes</h3>" + _table(("Passes", "Changed valid cases", "Excluded cases", "Changed case IDs"), comparisons,
+                                                            caption=f"Repeat changes for {cid} and {pid}", row_header=True, numeric_columns=(1, 2))
                         if comparisons else "<p>No repeat comparison is available.</p>")
                      + "".join(rows) + "</article>")
 
@@ -501,42 +588,81 @@ def generate_report(task, plan, labels, predictions, operations=None):
     source_rows = [(name, digest) for name, digest in result["source_hashes"].items()]
     if operations:
         source_rows.append(("supplied operations", _digest(operations)))
-    script = """document.querySelectorAll('[data-filter]').forEach(select => select.addEventListener('change', () => {
-      const filters = [...document.querySelectorAll('[data-filter]')];
-      document.querySelectorAll('.pass').forEach(section => {
+    script = """const filters = [...document.querySelectorAll('[data-filter]')];
+    const passes = [...document.querySelectorAll('.pass')];
+    function applyFilters() {
+      passes.forEach(section => {
         section.hidden = filters.some(filter => filter.value && section.dataset[filter.dataset.filter] !== filter.value);
       });
       document.querySelectorAll('article').forEach(article => {
         article.hidden = !article.querySelector('.pass:not([hidden])');
       });
-    }));"""
+      const visible = passes.filter(section => !section.hidden).length;
+      document.getElementById('filter-status').textContent = `Showing ${visible} of ${passes.length} pass sections.`;
+      document.getElementById('filter-empty').hidden = visible !== 0;
+    }
+    filters.forEach(select => select.addEventListener('change', applyFilters));
+    document.getElementById('reset-filters').addEventListener('click', () => {
+      filters.forEach(select => { select.value = ''; });
+      applyFilters();
+    });
+    document.querySelectorAll("[data-contents] a[href^='#']").forEach(link => link.addEventListener('click', () => {
+      const target = document.getElementById(link.hash.slice(1));
+      if (target && (target.hidden || target.closest('article[hidden]'))) {
+        filters.forEach(select => { select.value = ''; });
+        applyFilters();
+      }
+    }));
+    applyFilters();"""
+    comparison = _table(
+        ("Configuration", "Prompt", "Exact agreement", "Repeat range", "Invalid selected projections",
+         "No selected prediction", "Mean client request duration", "Observed cost", "Cost coverage"),
+        comparison_rows, caption="Configuration and prompt comparison (unfiltered)",
+        row_header=True, numeric_columns=(2, 3, 4, 5, 6, 7, 8), class_name="comparison-table")
+    synthetic_notice = ("<p class='notice'>Contains synthetic results: SYN units are local accounting, not provider charges.</p>"
+                        if any(config.get("settings", {}).get("adapter") == "synthetic" for config in configs.values())
+                        or any(str(op.get("route", "")).startswith("synthetic:") for op in operations) else "")
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width, initial-scale=1'>"
             f"<title>{_h(task['name'])} · local classification report</title>"
-            "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:1100px;margin:auto;padding:2rem;color:#18222c;background:#f7f8fa}"
-            "h1,h2,h3{line-height:1.2}article,.pass,header,footer{background:white;border:1px solid #d8dfe6;border-radius:8px;padding:1rem;margin:1rem 0}"
-            "table{border-collapse:collapse;width:100%;display:block;overflow-x:auto}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #d8dfe6;padding:.5rem;white-space:pre-wrap;overflow-wrap:anywhere}"
-            "label{display:inline-block;margin:.3rem}select{font:inherit;max-width:14rem}details{margin-top:1rem}"
-            ".pass[hidden],article[hidden]{display:none}svg{max-width:100%;margin:.5rem 0}</style></head><body>"
-            f"<header><h1>{_h(task['name'])}</h1><p>Private local classification report</p>"
+            "<style>body{font:16px/1.55 system-ui,sans-serif;max-width:1100px;margin:auto;padding:2rem;color:#18222c;background:#f7f8fa;font-variant-numeric:tabular-nums}"
+            "h1,h2,h3{line-height:1.2;letter-spacing:-.025em}p{max-width:70ch}article,.pass,header,footer,.overview{background:white;border:1px solid #d8dfe6;border-radius:8px;padding:1rem;margin:1rem 0}"
+            "table{border-collapse:collapse;width:100%;display:block;overflow-x:auto}caption{text-align:left;font-weight:600;padding:.5rem 0}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #d8dfe6;padding:.5rem;white-space:pre-wrap;overflow-wrap:anywhere}"
+            ".numeric,.outcome-table td:nth-child(n+2){text-align:right;font-variant-numeric:tabular-nums}tbody th[scope=row]{font-weight:600}"
+            "label{display:inline-block;margin:.3rem}select,button{font:inherit;max-width:14rem}button{padding:.35rem .7rem;border:1px solid #526879;border-radius:4px;background:white;color:#18222c;cursor:pointer}"
+            "button:hover{background:#e9eff2}button:active{background:#dce6eb}a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #176c8a;outline-offset:3px}"
+            "details{margin-top:1rem}.notice{border-left:3px solid #176c8a;padding-left:.75rem}.contents-pass{margin-left:1rem}.skip-link{position:absolute;left:-10000px;top:auto}.skip-link:focus{left:1rem;top:1rem;z-index:2;background:white;padding:.4rem}"
+            ".pass[hidden],article[hidden],[hidden]{display:none!important}svg{max-width:100%;margin:.5rem 0}</style></head><body>"
+            "<a class='skip-link' href='#main-content'>Skip to main content</a>"
+            f"<header><h1>{_h(task['name'])}</h1><p>Private local classification report</p>" + synthetic_notice +
             "<h2>Whole experiment summary (unfiltered)</h2><p>Filters below apply to pass details. "
             "The totals and findings in this summary always cover the complete experiment.</p>"
             f"<p>Planned positions: {total}; valid selected predictions: {valid_count}; no selected prediction: {result['missing']}; invalid selected projection: {len(result['invalid'])}.</p>"
             "<h2>Observed position outcomes</h2>"
             + _table(("Outcome", "Positions", "Planned denominator"),
-                     [(status, count, total) for status, count in sorted(outcome_counts.items())])
+                     [(status, count, total) for status, count in sorted(outcome_counts.items())],
+                     caption="Observed outcomes across the whole experiment", class_name="outcome-table")
             + "<p>Each planned position appears once in this table. A missing selected prediction can correspond to a refusal, failure, unknown dispatch, or a request without observed evidence.</p>"
             "<p>Scores use all planned positions. Positions without valid selected predictions receive no agreement credit. "
             "Request timing is measured per request, which may contain a batch; it is not per-case inference latency.</p>"
             "<h2>Findings</h2>" + "".join(f"<p>{x}</p>" for x in findings)
-            + "<nav aria-label='Report filters'>" + " ".join(filters) + "</nav></header>"
-            + "".join(pages)
+            + "<nav aria-label='Report filters'>" + " ".join(filters) +
+            " <button type='button' id='reset-filters'>Reset filters</button></nav>"
+            f"<p id='filter-status' role='status' aria-live='polite'>Showing {sum(len(c['passes']) for c in result['conditions'])} of {sum(len(c['passes']) for c in result['conditions'])} pass sections.</p>"
+            "<p id='filter-empty' hidden>No pass sections match these filters. Reset filters to show all passes.</p></header>"
+            "<main id='main-content'>"
+            "<section class='overview' aria-labelledby='comparison-heading'><h2 id='comparison-heading'>Compare configurations and prompts</h2>"
+            "<p>This overview always includes every pass. Exact agreement uses every planned position; missing and invalid predictions receive no credit. "
+            "Observed cost totals include recorded charges only, with coverage shown against planned requests. Estimates are reported separately in request details.</p>"
+            + comparison + "</section>"
+            + "<nav class='overview' data-contents aria-label='Report contents'><h2>Contents</h2><ul>" + "".join(contents) + "</ul></nav>"
+            + "".join(pages) + "</main>"
             + "<footer><h2>Provenance</h2><p>Canonical JSON SHA-256 digests bind the task, plan, references, selected prediction set and any supplied operation records. "
             "The evaluator validates planned positions and predictions; the caller is responsible for verifying operation records. "
             "This file includes private inputs and reference labels. Keep it local.</p>"
             "<p>Token fields follow <a href='https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion'>OpenRouter's chat response schema</a>. "
             "Cache reads and writes follow <a href='https://openrouter.ai/docs/guides/best-practices/prompt-caching'>OpenRouter's caching documentation</a>.</p>"
-            + _table(("Source", "SHA-256"), source_rows)
+            + _table(("Source", "SHA-256"), source_rows, caption="Source digests", row_header=True)
             + "</footer><script>" + script + "</script></body></html>")
 
 

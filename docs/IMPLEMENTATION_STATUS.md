@@ -4,7 +4,7 @@ The first runner and report are implemented and offline verified. The authorized
 
 ## Verified locally
 
-`python3 -m unittest discover -s tests -v` passed **154 tests with no skips** on macOS after running outside the enclosing development sandbox. The original baseline passed 78 tests. The expanded suite includes actual reference/symlink denials and environment scrubbing under both offline and HTTPS-enabled profiles, crash/receipt recovery, atomic shared budgets and cap-amendment races, mocked HTTP errors/partial bodies and identity checks, matrix ordering and process locking, pause/stop/top-up behavior, immutable report snapshots, and subprocess reproduction of both fictional task workflows.
+`python3 -m unittest discover -s tests -v` passed **160 tests with no skips** on macOS after running outside the enclosing development sandbox. The original baseline passed 78 tests. The expanded suite includes actual reference/symlink denials and environment scrubbing under both offline and HTTPS-enabled profiles, crash/receipt recovery, atomic shared budgets and cap-amendment races, mocked HTTP errors/partial bodies and identity checks, matrix ordering and process locking, pause/stop/top-up behavior, immutable report snapshots, and subprocess reproduction of both fictional task workflows.
 
 The fictional candidate and product demos each complete 24 synthetic requests, retaining all 36 planned positions. Re-running a completed matrix preserves its request count. Generated reports are private local HTML files with mode 0600. Browser visual inspection was blocked by the browser tool's local-file URL policy; HTML generation, escaping, report calculations, filter code and supporting cases have automated tests, and the user subsequently confirmed visual readability; direct agent rendering remains unverified.
 
@@ -37,4 +37,6 @@ Authentication, serving, saved raw evidence, charge settlement and private repor
 
 Use [RUNNER.md](RUNNER.md) for complete commands and [LIVE_SMOKE_PLAN.md](LIVE_SMOKE_PLAN.md) for the approval gate. Historical contract documents describe the checkpoint they introduced; this page records the integrated implementation's current status.
 
-A focused [UI/UX review](REPORT_UX_REVIEW.md) identified comparison, filter-feedback, evidence-density and navigation improvements. These are residual enhancements; no UI redesign has been applied.
+A focused [UI/UX review](REPORT_UX_REVIEW.md) identified comparison, filter-feedback, evidence-density and navigation improvements. These improvements are now implemented, with focused offline regression coverage. Fresh reports were generated for both fixtures; the changed UI still needs the [updated visual/interaction check](REPORT_UX_CHECK.md).
+
+The report UX implementation passed independent review with no BLOCKING findings. RESIDUAL: existing pass-level cost charts show recorded sums without per-pass coverage counts; the new comparison table exposes coverage. Both fresh demos completed 24 synthetic requests and preserved all 36 positions. Task, plan, reference and prediction hashes match the earlier reports.

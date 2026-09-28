@@ -2,7 +2,7 @@
 
 A reusable benchmark core for categorical classification tasks: define the task, compare prompts and model configurations, and measure both agreement and repeatability.
 
-**Current status: the generic matrix runner and private local report are implemented; 154 offline tests pass.** Define categorical tasks, compare configurations and prompts, choose repeats and batches, preview exact work, and execute under a shared budget. Both smoke and full runs support user-selected caps and budget exhaustion policies: pause for an explicit increase, or stop.
+**Current status: the generic matrix runner and private local report are implemented; 160 offline tests pass.** Define categorical tasks, compare configurations and prompts, choose repeats and batches, preview exact work, and execute under a shared budget. Both smoke and full runs support user-selected caps and budget exhaustion policies: pause for an explicit increase, or stop.
 
 Start with the [operator workflow](docs/RUNNER.md), [task and result formats](docs/FORMATS.md), and [implementation status and remaining verification gates](docs/IMPLEMENTATION_STATUS.md). Synthetic examples test the software, not model quality or nondeterminism.
 
