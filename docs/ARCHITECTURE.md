@@ -6,13 +6,13 @@ Status: v0.1 offline core implemented; live execution is proposed. Repository vi
 
 One project owns generic classification experiments. Domain-specific task packs provide input fields, rubric, allowed labels, dataset split and separately versioned references. The candidate-experience benchmark remains a separate case study and immutable evidence archive. Do not move or rewrite its active execution protocol during extraction.
 
-The first release has two commands: plan and evaluate. A future execution command will consume a frozen plan and emit immutable attempt records. Scoring remains offline. A task pack must be reusable without editing provider code or forking the report UI.
+The current release supports planning, evaluation and simulated execution with explicit recovery. A live execution command will consume a frozen plan and emit immutable attempt records. Scoring remains offline. A task pack must be reusable without editing provider code or forking the report UI.
 
 ## Data flow
 
 Task + experiment + allowed inputs -> deterministic request plan -> adapter execution -> raw attempts -> strict parser -> offline scoring with versioned references -> report.
 
-The current implementation begins at planning and resumes at saved predictions. The separate artifact API can store and verify externally supplied response bytes and parser bindings, but the evaluator is not yet wired to it. Neither component establishes real execution, billing enforcement or process isolation. Those are explicit next-stage contracts.
+The simulated runner now connects planning, verified request artifacts, atomic admission, an isolated fake worker, immutable response receipts, recovery and label-free export. Offline evaluation consumes saved predictions separately. The enforced macOS worker boundary and simulated accounting are tested; live provider attribution, network-capable isolation and real spending enforcement are still unverified.
 
 Request identities bind the full task, model/configuration, prompt text, repeat number, batch index and ordered input membership. The evaluator reconstructs the matrix and verifies the supplied plan. Output scores bind their source documents by canonical JSON SHA-256; these are semantic document hashes, not original-byte archive hashes.
 
@@ -24,7 +24,7 @@ For a real repeat study, freeze membership, prompt bytes, model route, sampling 
 
 The reporting unit is an input record, grouped by scenario family where relevant. Repeats do not multiply independent sample size. Label stability, output validity and correctness are separate metrics. A consistently wrong answer is stable, and an invalid output is not a categorical flip.
 
-See the [execution evidence contracts](EVIDENCE_CONTRACTS.md) for the next-stage records and acceptance gates. The artifact/parser-binding subset, offline money ledger and [offline coordinator](COORDINATOR_API.md) are implemented. The coordinator records one dispatch intent and preserves uncertain attempts across restarts; it issues no live spending permission. End-to-end execution, atomic accounting admission, artifact recovery and isolation gates remain specified.
+See the [execution evidence contracts](EVIDENCE_CONTRACTS.md) for the next-stage records and acceptance gates. The artifact/parser-binding subset, offline money ledger and [offline coordinator](COORDINATOR_API.md) are implemented. The coordinator records one dispatch intent and preserves uncertain attempts across restarts; it issues no live spending permission. Atomic admission, verified completion, artifact recovery and offline isolation are implemented and tested in the simulated path. Connecting those guarantees to a real adapter remains the next gate.
 
 ## Live execution to extract next
 

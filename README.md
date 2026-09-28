@@ -4,6 +4,8 @@ A reusable benchmark core for categorical classification tasks: define the task,
 
 **Current release: offline planning, scoring and simulated execution.** It creates deterministic request plans, scores saved predictions, and exercises budget admission and crash recovery through an isolated fake worker. It does not call models yet. The included three-pass example is a synthetic software fixture, not evidence of model performance or nondeterminism.
 
+For a new implementation task, start with the [handoff](docs/HANDOFF.md), [goal description](docs/NEXT_TASK_GOAL.md) and [benchmark lessons](docs/BENCHMARK_LESSONS.md).
+
 ## Why a separate project
 
 The [Candidate Experience Feedback Benchmark](https://github.com/adambkovacs/candidate-experience-benchmark) tested four decisions about candidate-written reviews. Its results exposed reusable needs: strict output validation, visible missing answers, versioned references, exact request identities, cost accounting, and repeatability measurements. This repository separates those capabilities from one recruitment dataset.

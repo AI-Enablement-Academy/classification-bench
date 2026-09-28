@@ -1,5 +1,7 @@
 # Delivery plan
 
+The separate implementation task starts from [HANDOFF.md](HANDOFF.md) and [NEXT_TASK_GOAL.md](NEXT_TASK_GOAL.md). Operational requirements from the case study are recorded in [BENCHMARK_LESSONS.md](BENCHMARK_LESSONS.md).
+
 ## Completed: offline foundation
 
 Task contracts, matrix planning, request IDs, strict categorical evaluation, full-denominator metrics, repeat stability, synthetic fixtures and tests. No real model requests or new benchmark data.
