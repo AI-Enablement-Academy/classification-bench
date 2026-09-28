@@ -43,3 +43,19 @@ The smoke proves authentication, serving, raw capture, usage/charge settlement, 
 A byte-verified copy of both run archives, the offline evaluation, and the enrolled `4bbc357` code is retained under repository-local `private-data/smoke-20260928/`, ignored by Git. `SHA256.json` covers 140 copied files, including the correction script (SHA-256 `c699d2e2d15b5564254bb984ab57dfdab75489fdcff692ef076e8bd7acacf026`). No credential is present in those archived bytes. The archive records the original absolute paths needed to reproduce frozen run bindings; do not silently rewrite archived configs to new paths or dispatch additional work from them.
 
 The final full suite passed **148 tests with no skips** on the root macOS environment. Independent reviews approved both the transport correction and the narrow parser alias. A separate real credential-free preflight verified TLS, DNS and public HTTPS while preserving reference/symlink/environment restrictions. Browser visual verification and the human operator handoff have not been claimed.
+
+
+## Later read-only metadata check
+
+Two read-only lookups for the existing response IDs later returned HTTP 200. No model request was made. Each raw response was saved and hash-verified under `private-data/smoke-20260928/metadata-refresh/`; the original 404 artifacts and ledger observations remain unchanged. `identity-review.json` and a separate `SHA256.json` record this additional evidence.
+
+Both generation records identify provider `OpenAI`, with `total_cost` exactly matching the earlier completion usage cost. They name **`openai/gpt-4.1-nano-2025-04-14`**, while the request and completion response name **`openai/gpt-4.1-nano`**. The strict generation parser rejects that identifier mismatch. This may be alias resolution, but the saved pre-dispatch snapshot did not bind that dated identifier; no mapping is silently added to historical execution evidence.
+
+| Position | Refreshed metadata SHA-256 | Reported generation time | Reported latency |
+| --- | --- | --- | --- |
+| fictional-b | `77fb55434bc8f5ce651f7c0e1df2b19e92017ef734e4fede12542aa766427ce6` | 2157 ms | 1816 ms |
+| fictional-c | `e08b454dd95c783bed6c4e93d302c13e88700d6dfaede40503fd047cb4cbe7fc` | 1171 ms | 950 ms |
+
+These are the provider's metadata fields, not pure inference time. They remain separately sourced observations under an unresolved model-identity comparison. Metadata token counts also differ from the completion usage counts; neither source is overwritten or substituted for the other. The [generation metadata schema](https://openrouter.ai/docs/api/api-reference/generations/get-generation) documents the source fields. OpenRouter also exposes a distinct [`canonical_slug` in its model schema](https://openrouter.ai/docs/api/api-reference/models/get-model); a future canonical mapping must be captured before dispatch rather than inferred into an old run.
+
+The remaining live gap is identity validation, not missing access to the metadata endpoint. A new inference scope would need explicit approval and a frozen exact model identity. The original unknown hold, charges, invalid outcomes, and three-attempt limit are unchanged. The [second-operator check](OPERATOR_CHECK.md) can proceed offline without further spending.

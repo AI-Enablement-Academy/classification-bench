@@ -26,4 +26,4 @@ Optionally inspect the already saved live report at `private-data/smoke-20260928
 
 ## Return the result
 
-Record the commit, Python/OS/browser versions, whether both demos and the restart/recovery checks succeeded, whether the report filters and case details worked, and any exact error or visual defect. Report an unsuccessful or unperformed check honestly. Successful human reproduction and inspection can close those gates; unavailable generation metadata and any further live checks remain separate, as recorded in [LIVE_SMOKE_RESULT.md](LIVE_SMOKE_RESULT.md).
+Record the commit, Python/OS/browser versions, whether both demos and the restart/recovery checks succeeded, whether the report filters and case details worked, and any exact error or visual defect. Report an unsuccessful or unperformed check honestly. Successful human reproduction and inspection can close those gates; the unresolved model-identity comparison and any further live checks remain separate, as recorded in [LIVE_SMOKE_RESULT.md](LIVE_SMOKE_RESULT.md).

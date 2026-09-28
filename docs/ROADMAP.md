@@ -23,7 +23,7 @@ See [implementation status](IMPLEMENTATION_STATUS.md) for the verification bound
 
 ## Pending: authorized live smoke and operator handoff
 
-The operator approved the [three-request smoke](LIVE_SMOKE_PLAN.md) with a $0.50 cap and pause at exhaustion. The [smoke evidence](LIVE_SMOKE_RESULT.md) records one unknown attempt and two HTTP 200 responses, with strict output failures and missing generation metadata. No approved positions remain. Verify serving identity, actual usage/billing, report output and idempotent restart. Have a second operator reproduce the documented workflow. Browser rendering has not been visually inspected because the browser tool blocked the local file URL.
+The operator approved the [three-request smoke](LIVE_SMOKE_PLAN.md) with a $0.50 cap and pause at exhaustion. The [smoke evidence](LIVE_SMOKE_RESULT.md) records one unknown attempt and two HTTP 200 responses, with strict output failures and a later generation-metadata model-identifier mismatch. No approved positions remain. Verify serving identity, actual usage/billing, report output and idempotent restart. Have a second operator reproduce the documented workflow. Browser rendering has not been visually inspected because the browser tool blocked the local file URL.
 
 The active candidate-experience study retains its existing inputs, workers, outputs, publication and budgets in its own repository. Its approvals do not authorize work here. Subscription CLI, native Choice/NLI adapters, real task datasets and broader benchmark runs each need explicit scope and task-specific rubrics. The runner lists unsupported methods instead of substituting a hosted chat model.
 

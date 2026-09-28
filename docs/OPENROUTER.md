@@ -2,7 +2,7 @@
 
 `classification_bench.adapters.OpenRouterAdapter` prepares one nonstreaming chat completion for a pinned model and provider. It makes one HTTP attempt. The runner must save `TransportResult.raw_bytes` before calling `parse`, including HTTP error or partial response bodies. A timeout leaves dispatch and billing uncertain; neither the adapter nor recovery retries it.
 
-The adapter has offline tests and partial live evidence from the [authorized smoke](LIVE_SMOKE_RESULT.md): two HTTP 200 responses, saved raw evidence and reported charges after a sandbox correction. Both outputs fail strict validation; an earlier attempt remains unknown. Generation metadata was unavailable. This is not a release-complete or model-quality claim.
+The adapter has offline tests and partial live evidence from the [authorized smoke](LIVE_SMOKE_RESULT.md): two HTTP 200 responses, saved raw evidence and reported charges after a sandbox correction. Both outputs fail strict validation; an earlier attempt remains unknown. Initial generation lookups were unavailable; later metadata named a dated model identifier different from the request alias, retained as an unresolved strict identity comparison. This is not a release-complete or model-quality claim.
 
 ## Configuration
 
