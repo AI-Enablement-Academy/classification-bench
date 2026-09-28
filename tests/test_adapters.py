@@ -89,6 +89,12 @@ class OpenRouterTests(unittest.TestCase):
         with self.assertRaisesRegex(AdapterError, "unbounded"):
             self.adapter(config)
 
+    def test_request_fee_cannot_exceed_enforced_zero_max_price(self):
+        config, _, _, _ = fixture()
+        config["settings"]["endpoint_snapshot"]["pricing"]["request"] = "0.001"
+        with self.assertRaisesRegex(AdapterError, "request fee"):
+            self.adapter(config)
+
     def test_no_retry_http_error_and_redaction(self):
         config, plan, req, prompt = fixture()
         calls = []

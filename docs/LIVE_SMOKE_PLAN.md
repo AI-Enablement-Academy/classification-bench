@@ -4,7 +4,7 @@ Status: prepared, not authorized or dispatched. The adapter and runner have offl
 
 ## Concrete proposal
 
-Use the three fictional records in [the candidate fixture](../examples/candidate/inputs.json), its baseline rubric, one repeat and batch size one. Route `openai/gpt-4.1-nano` through the exact OpenRouter `openai` endpoint, temperature zero, at most 512 output tokens. Disable fallback, response repair, cache use and automatic inference retry. Provider concurrency and run concurrency are both one.
+Use the three fictional records in [the candidate fixture](../examples/candidate/inputs.json), its baseline rubric, one repeat and batch size one. Route `openai/gpt-4.1-nano` through the exact OpenRouter `openai` endpoint, temperature zero, at most 512 output tokens. Disable fallback, response repair and automatic inference retry, and request response-cache bypass. Provider-side prompt caching is a separate mechanism; record returned cache usage rather than asserting it was disabled. Provider concurrency and run concurrency are both one.
 
 This produces exactly **three inference requests**. It also performs unauthenticated public catalog checks and up to one read-only generation-metadata lookup per saved completion. Those lookups are not repeats. The purpose is to verify request/response attribution, strict parsing, identity observations, usage, settlement, restart behavior and report generation. Three records do not establish model quality or repeat stability.
 

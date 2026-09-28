@@ -303,6 +303,8 @@ class OpenRouterAdapter:
             if key == "web_search" and amount != 0 and (self.model, self.provider) != (
                     "openai/gpt-4.1-nano", "openai"):
                 raise AdapterError("unbounded web search price for this route")
+            if key == "request" and amount != 0:
+                raise AdapterError("request fee exceeds enforced zero max_price")
             if key not in ("prompt", "completion", "input_cache_read", "web_search") and amount != 0:
                 raise AdapterError(f"unbounded price component: {key}")
 

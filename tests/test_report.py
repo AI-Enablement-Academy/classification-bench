@@ -1,10 +1,11 @@
 """Report behavior on small, fully offline evidence."""
 
+import copy
 import math
 import unittest
 
-from classification_bench.core import ValidationError, build_plan
-from classification_bench.report import generate_report
+from classification_bench.core import ValidationError, _digest, build_plan
+from classification_bench.report import _derived_telemetry, generate_report
 
 
 class ReportTests(unittest.TestCase):
@@ -143,6 +144,102 @@ class ReportTests(unittest.TestCase):
         operation = {'parsed_status': 'invalid'}
         self.assertEqual(_observed_outcome(good, {bad}, supplied, operation), 'valid selected')
         self.assertEqual(_observed_outcome(bad, {bad}, supplied, operation), 'invalid')
+
+    def test_nested_usage_and_frozen_price_derive_separate_estimate_without_mutating_evidence(self):
+        snapshot = {"model_id": "vendor/model", "provider_tag": "vendor", "observed_at": "2026-09-28T00:00:00Z",
+                    "source_url": "https://openrouter.ai/api/v1/models/vendor/model/endpoints",
+                    "max_prompt_tokens": 1000, "max_completion_tokens": 100,
+                    "supported_parameters": ["max_completion_tokens"],
+                    "pricing": {"prompt": "0.000001", "completion": "0.000002",
+                                "input_cache_read": "0.00000025", "request": "0"}}
+        self.experiment["configs"][0] = {"id": "c", "model": "vendor/model",
+                                          "settings": {"adapter": "openrouter", "provider": "vendor",
+                                                       "endpoint_snapshot": snapshot}}
+        self.plan = build_plan(self.task, self.experiment, self.inputs)
+        operation = {"request_id": self.plan["requests"][0]["request_id"], "cost_currency": "USD",
+                     "state": "response_saved", "parsed_status": "valid", "observed_cost_micro_usd": 115,
+                     "input_tokens": 100, "output_tokens": 20, "reasoning_tokens": None,
+                     "cache_tokens": None, "estimated_cost_micro_usd": None,
+                     "usage": {"prompt_tokens": 100, "completion_tokens": 20,
+                               "completion_tokens_details": {"reasoning_tokens": 7},
+                               "prompt_tokens_details": {"cached_tokens": 40, "cache_write_tokens": 0}}}
+        saved = copy.deepcopy(operation)
+        html = generate_report(self.task, self.plan, self.labels, self.predictions, [operation])
+        self.assertEqual(operation, saved)
+        self.assertIn(_digest([operation]), html)
+        self.assertIn(_digest(snapshot), html)
+        self.assertIn("Reasoning tokens</td><td>7 across 1 request(s)", html)
+        self.assertIn("Cache tokens</td><td>40 across 1 request(s)", html)
+        self.assertIn("Pricing estimates</td><td>140 micro USD across 1 request(s)", html)
+        self.assertIn("Observed provider charges</td><td>115 micro USD across 1 request(s)", html)
+        self.assertIn("100 prompt", html)
+        self.assertIn("cache savings excluded", html)
+        self.assertIn("reasoning is included in completion", html)
+
+    def test_cache_writes_block_estimate_while_malformed_cache_read_count_remains_visible(self):
+        config = {"id": "c", "model": "vendor/model",
+                  "settings": {"adapter": "openrouter", "provider": "vendor",
+                               "endpoint_snapshot": {"model_id": "vendor/model", "provider_tag": "vendor",
+                                                     "pricing": {"prompt": "0.000001", "completion": "0.000002",
+                                                                "input_cache_read": "0.00000025", "request": "0"}}}}
+        base = {"request_id": "r", "cost_currency": "USD", "input_tokens": 100, "output_tokens": 20,
+                "reasoning_tokens": None, "cache_tokens": None,
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20,
+                          "completion_tokens_details": {"reasoning_tokens": 7},
+                          "prompt_tokens_details": {"cached_tokens": 40, "cache_write_tokens": 0}}}
+        malformed = copy.deepcopy(base)
+        malformed["usage"]["prompt_tokens_details"]["cached_tokens"] = "40"
+        view = _derived_telemetry(malformed, config)
+        self.assertIsNone(view["cache_tokens"])
+        self.assertEqual(view["estimated_cost_micro_usd"], 140)
+        self.assertIn("malformed", view["_telemetry_note"])
+        self.assertIn("cache savings excluded", view["_estimate_basis"])
+        writing = copy.deepcopy(base)
+        writing["usage"]["prompt_tokens_details"]["cache_write_tokens"] = 8
+        view = _derived_telemetry(writing, config)
+        self.assertIsNone(view["estimated_cost_micro_usd"])
+        self.assertIn("Cache writes", view["_estimate_basis"])
+        no_cache_price = copy.deepcopy(base)
+        del config["settings"]["endpoint_snapshot"]["pricing"]["input_cache_read"]
+        view = _derived_telemetry(no_cache_price, config)
+        self.assertEqual(view["estimated_cost_micro_usd"], 140)
+        self.assertIn("Standard input-rate", view["_estimate_basis"])
+
+    def test_nano_openai_optional_search_and_omitted_cache_write_have_standard_rate_estimate(self):
+        config = {"id": "c", "model": "openai/gpt-4.1-nano",
+                  "settings": {"adapter": "openrouter", "provider": "openai",
+                               "endpoint_snapshot": {"model_id": "openai/gpt-4.1-nano", "provider_tag": "openai",
+                                                     "pricing": {"prompt": "0.000001", "completion": "0.000002",
+                                                                 "request": "0", "web_search": "0.01"}}}}
+        operation = {"request_id": "r", "cost_currency": "USD",
+                     "usage": {"prompt_tokens": 100, "completion_tokens": 20,
+                               "completion_tokens_details": {"reasoning_tokens": 7},
+                               "prompt_tokens_details": {"cached_tokens": 40}}}
+        view = _derived_telemetry(operation, config)
+        self.assertEqual(view["reasoning_tokens"], 7)
+        self.assertEqual(view["cache_tokens"], 40)
+        self.assertEqual(view["estimated_cost_micro_usd"], 140)
+        self.assertIn("cache savings excluded", view["_estimate_basis"])
+        self.assertIn("actual serving endpoint price is unverified", view["_estimate_basis"])
+        wrong_model = dict(operation, returned_model="openai/other-model")
+        view = _derived_telemetry(wrong_model, config)
+        self.assertIsNone(view["estimated_cost_micro_usd"])
+        self.assertIn("Returned model differs", view["_estimate_basis"])
+        identity_error = dict(operation, returned_model="openai/gpt-4.1-nano",
+                              provider_identity_status="identity_error")
+        view = _derived_telemetry(identity_error, config)
+        self.assertIsNone(view["estimated_cost_micro_usd"])
+        self.assertIn("identity evidence conflicts", view["_estimate_basis"])
+        other = copy.deepcopy(config)
+        other["model"] = "vendor/model"
+        other["settings"]["provider"] = "vendor"
+        other["settings"]["endpoint_snapshot"]["model_id"] = "vendor/model"
+        other["settings"]["endpoint_snapshot"]["provider_tag"] = "vendor"
+        other_operation = copy.deepcopy(operation)
+        other_operation["usage"]["prompt_tokens_details"]["cache_write_tokens"] = 0
+        view = _derived_telemetry(other_operation, other)
+        self.assertIsNone(view["estimated_cost_micro_usd"])
+        self.assertIn("unsupported nonzero components", view["_estimate_basis"])
 
     def test_plan_validation_is_not_bypassed(self):
         broken = dict(self.plan)

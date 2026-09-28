@@ -8,9 +8,9 @@ See [the example](../examples/task.json). `name` identifies the task. `input_key
 
 ## Experiment
 
-See [the example](../examples/experiment.json). `configs` contains objects with `id`, `model`, and optional `settings`. Settings are JSON-compatible metadata in v0.1; no adapter verifies that a provider supports or used them. `prompts` contains `id` and `text`. Positive integers `repeats` and `batch_size` define the matrix and shared context membership.
+See [the example](../examples/experiment.json). `configs` contains objects with `id`, `model`, and optional `settings`. The offline planner treats settings as JSON-compatible metadata. The matrix runner additionally validates settings through the selected adapter; the OpenRouter adapter checks supported controls against its frozen endpoint snapshot and a fresh catalog comparison before admission. Requested controls are distinct from observed provider evidence. `prompts` contains `id` and `text`. Positive integers `repeats` and `batch_size` define the matrix and shared context membership.
 
-Prompt text can include the full task rubric. Native system/user role separation is a future adapter contract, not implemented by this offline planner. Configurations and prompts are expanded in declaration order, followed by repeat and batch order. This deterministic order is not a counterbalanced real execution schedule.
+Prompt text can include the full task rubric. The offline planner preserves prompt bytes. The OpenRouter adapter renders them in a system message and serializes the allowlisted records and field vocabulary in a user message; exact rendered bytes are stored in execution evidence. Other methods must declare their own role and input semantics. Configurations and prompts are expanded in declaration order, followed by repeat and batch order. This deterministic order is not a counterbalanced real execution schedule.
 
 ## Inputs and reference labels
 
@@ -22,7 +22,7 @@ Reference files use `{ "records": [{ "id": "example-1", "labels": { "segment": "
 
 The planner emits `schema_version`, `task`, `experiment`, and `requests`. A request includes `request_id`, `config_id`, `prompt_id`, `repeat`, `batch_index`, and ordered `items`. The request hash binds the full effective task/configuration/prompt and membership, even though the shared definitions appear once at plan level.
 
-The evaluator reconstructs and validates the full matrix before accepting predictions. A request ID is a content binding, not proof that a model executed it. There is no network runner or raw-attempt adapter yet.
+The evaluator reconstructs and validates the full matrix before accepting predictions. A request ID is a content binding, not proof that a model executed it. The authorization-gated matrix runner stores raw-attempt evidence and verified request-bound receipts; a plan alone still does not establish execution. See [the runner](RUNNER.md).
 
 ## Saved predictions
 

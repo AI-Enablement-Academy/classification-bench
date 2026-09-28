@@ -4,11 +4,13 @@ The first runner and report are implemented and offline verified. The release is
 
 ## Verified locally
 
-`python3 -m unittest discover -s tests -v` passed **136 tests with no skips** on macOS after running outside the enclosing development sandbox. The original baseline passed 78 tests. The expanded suite includes actual reference/symlink denials and environment scrubbing under both offline and HTTPS-enabled profiles, crash/receipt recovery, atomic shared budgets and cap-amendment races, mocked HTTP errors/partial bodies and identity checks, matrix ordering and process locking, pause/stop/top-up behavior, immutable report snapshots, and subprocess reproduction of both fictional task workflows.
+`python3 -m unittest discover -s tests -v` passed **143 tests with no skips** on macOS after running outside the enclosing development sandbox. The original baseline passed 78 tests. The expanded suite includes actual reference/symlink denials and environment scrubbing under both offline and HTTPS-enabled profiles, crash/receipt recovery, atomic shared budgets and cap-amendment races, mocked HTTP errors/partial bodies and identity checks, matrix ordering and process locking, pause/stop/top-up behavior, immutable report snapshots, and subprocess reproduction of both fictional task workflows.
 
 The fictional candidate and product demos each complete 24 synthetic requests, retaining all 36 planned positions. Re-running a completed matrix preserves its request count. Generated reports are private local HTML files with mode 0600. Browser visual inspection was blocked by the browser tool's local-file URL policy; HTML generation, escaping, report calculations, filter code and supporting cases have automated tests, but visual rendering is unverified.
 
-The final scoped independent code review returned **APPROVE**, with no confirmed BLOCKING findings. RESIDUAL: directly invoking `python3 scripts/prepare_run.py` does not resolve the package in an uninstalled checkout; the documented `python3 -m scripts.prepare_run` command works and was reproduced. This is an optional invocation convenience, not a failure of the supported workflow.
+A follow-up audit added nested reasoning/cache token extraction, separately labeled frozen-price estimates, a registered adapter runtime contract, and historical report/export reads that preserve the original source hashes. New dispatch still requires the exact enrolled implementation. See the [acceptance audit](ACCEPTANCE_AUDIT.md) and [adapter runtime contract](ADAPTER_RUNTIME.md).
+
+The final scoped independent code review returned **APPROVE**, with no confirmed BLOCKING findings. RESIDUAL: directly invoking `python3 scripts/prepare_run.py` does not resolve the package in an uninstalled checkout; the documented `python3 -m scripts.prepare_run` command works and was reproduced. This is an optional invocation convenience, not a failure of the supported workflow. RESIDUAL: an older pending run requires its enrolled code version to dispatch or recover after implementation changes; read-only historical reports and exports remain available.
 
 ## Implemented boundaries
 

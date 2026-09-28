@@ -11,10 +11,11 @@ import json
 import os
 import fcntl
 from pathlib import Path
+import re
 import stat
 
-from .adapters import (AdapterError, OpenRouterAdapter, ParsedResponse, PreparedRequest,
-                       TransportResult)
+from .adapters import ParsedResponse, PreparedRequest, TransportResult
+from .adapter_runtime import OfflineRuntime, registry
 from .budget import BudgetError, BudgetLedger
 from .coordinator import CoordinatorError
 from .core import build_plan
@@ -151,15 +152,18 @@ class UnsupportedAdapter:
                                request["request_id"], tuple(item["id"] for item in request["items"]))
 
 
-def _adapter(config, supplied=None):
+registry.register("synthetic", OfflineRuntime(SyntheticAdapter))
+_UNSUPPORTED_RUNTIME = OfflineRuntime(UnsupportedAdapter, identity_status="unsupported")
+
+
+def _runtime(config, supplied=None):
     if supplied is not None:
-        return supplied
-    mode = config.get("settings", {}).get("adapter")
-    if mode == "synthetic":
-        return SyntheticAdapter(config)
-    if mode == "openrouter":
-        return OpenRouterAdapter(config)
-    return UnsupportedAdapter(config)
+        return OfflineRuntime(lambda _: supplied)
+    return registry.get(config.get("settings", {}).get("adapter")) or _UNSUPPORTED_RUNTIME
+
+
+def _adapter(config, supplied=None):
+    return _runtime(config, supplied).create_adapter(config)
 
 
 def _load(config_path, adapter=None):
@@ -188,8 +192,10 @@ def _load(config_path, adapter=None):
     experiment, experiment_bytes = _load_json(config["experiment"])
     inputs, input_bytes = _load_json(config["inputs"])
     plan = build_plan(task, experiment, inputs)
-    adapters = {item["id"]: _adapter(item, adapter) for item in experiment["configs"]}
-    offline = all(getattr(item, "offline", False) for item in adapters.values())
+    runtimes = {item["id"]: _runtime(item, adapter) for item in experiment["configs"]}
+    adapters = {item["id"]: runtimes[item["id"]].create_adapter(item)
+                for item in experiment["configs"]}
+    offline = all(item.offline for item in runtimes.values())
     if offline:
         if (config["authorization_file"] is not None or config["currency"] != "SYN" or
                 config["scale"] != 1 or not config["scope"].startswith("synthetic:")):
@@ -207,18 +213,19 @@ def _load(config_path, adapter=None):
     for ordinal, request in enumerate(plan["requests"], 1):
         cfg = by_config[request["config_id"]]
         current_adapter = adapters[cfg["id"]]
+        current_runtime = runtimes[cfg["id"]]
         prepared = current_adapter.prepare(plan, request, by_prompt[request["prompt_id"]])
         if not isinstance(prepared.body, bytes) or prepared.request_id != request["request_id"]:
             raise BenchmarkError("adapter prepared an unbound request")
         if (type(prepared.reserve_microusd) is not int or prepared.reserve_microusd <
                 (0 if isinstance(current_adapter, UnsupportedAdapter) else 1)):
             raise BenchmarkError("adapter supplied an invalid per-request bound")
+        source_digests = current_runtime.source_digests(current_adapter)
         manifest = canonical_bytes({"schema_version": 1, "request_id": request["request_id"],
                                     "plan_sha256": digest(canonical_bytes(plan)),
                                     "run_sha256": binding, "request_sha256": digest(prepared.body),
                                     "adapter": type(current_adapter).__name__,
-                                    "adapter_source_sha256": digest(Path(__import__(type(current_adapter).__module__,
-                                                                                fromlist=['x']).__file__).read_bytes()),
+                                    **source_digests,
                                     "resolved_controls": cfg.get("settings", {}),
                                     "route": prepared.route, "messages": json.loads(prepared.body).get("messages"),
                                     "retry_policy": "none", "cache_policy": "off",
@@ -226,7 +233,8 @@ def _load(config_path, adapter=None):
                                                  "batch_index": request["batch_index"]},
                                     "budget_scope": config["scope"]})
         materials.append({"request": request, "prepared": prepared, "manifest": manifest,
-                          "adapter": current_adapter, "config": cfg, "scope": config["scope"],
+                          "adapter": current_adapter, "runtime": current_runtime,
+                          "config": cfg, "scope": config["scope"],
                           "fields": plan["task"]["fields"]})
     return config, plan, binding, materials, offline
 
@@ -396,6 +404,45 @@ def _refs(verified, material):
     return {"manifest_ref": refs[0], "request_ref": refs[1]}
 
 
+def _saved_refs(verified, material):
+    """Verify an enrolled request using its immutable historical artifacts.
+
+    Reading results must not require the adapter and runtime source files to
+    retain the same bytes forever. Dispatch still uses `_refs` above, which
+    deliberately checks the current build's complete manifest and body.
+    """
+    request = material["request"]
+    entry = verified.execution.get(request["request_id"])["execution"]
+    refs = []
+    values = []
+    for sha in (entry["manifest_digest"], entry["input_digest"]):
+        path = verified.artifact_root / "objects" / sha[:2] / sha
+        ref = ArtifactRef(1, sha, path.stat().st_size, "application/json",
+                          f"objects/{sha[:2]}/{sha}")
+        values.append(json.loads(read_artifact(verified.artifact_root, ref)))
+        refs.append(ref)
+    manifest, body = values
+    expected = json.loads(material["manifest"])
+    frozen_fields = ("schema_version", "request_id", "plan_sha256", "run_sha256",
+                     "resolved_controls", "retry_policy", "cache_policy", "schedule",
+                     "budget_scope")
+    if (not isinstance(manifest, dict) or not isinstance(body, dict) or
+            any(manifest.get(key) != expected[key] for key in frozen_fields) or
+            manifest.get("request_sha256") != refs[1].sha256 or
+            body.get("request_id", request["request_id"]) != request["request_id"] or
+            body.get("messages") != manifest.get("messages") or
+            not isinstance(manifest.get("adapter_source_sha256"), str) or
+            re.fullmatch(r"[0-9a-f]{64}", manifest["adapter_source_sha256"]) is None or
+            not isinstance(manifest.get("route"), str) or not manifest["route"]):
+        raise BenchmarkError("saved request binding mismatch")
+    for name in ("runtime_source_sha256", "transport_source_sha256"):
+        value = manifest.get(name)
+        if value is not None and (not isinstance(value, str) or
+                                  re.fullmatch(r"[0-9a-f]{64}", value) is None):
+            raise BenchmarkError("saved runtime binding invalid")
+    return {"manifest_ref": refs[0], "request_ref": refs[1], "manifest": manifest}
+
+
 def _save_observation(verified, request_id, response_sha, payload):
     encoded = canonical_bytes(payload)
     with verified.execution.coordinator._transaction() as conn:
@@ -446,18 +493,6 @@ def _observation(verified, request_id):
     return json.loads(row["payload"])
 
 
-def _zero_charge_evidence(observation, offline):
-    if offline:
-        return "synthetic:zero-fee"
-    generation_sha = observation.get("generation_response_sha256")
-    if generation_sha and (observation.get("generation") or {}).get("observed_cost_microusd") == 0:
-        return f"openrouter:generation:{generation_sha}"
-    usage = observation["parsed"].get("usage") or {}
-    if usage.get("cost") is not None:
-        return f"openrouter:usage:{observation['response_sha256']}"
-    return None
-
-
 def _validate_task_predictions(parsed, material):
     """Check categorical vocabulary without opening reference labels."""
     if parsed.status != "valid" or not parsed.predictions:
@@ -478,29 +513,19 @@ def _validate_task_predictions(parsed, material):
     return parsed
 
 
-def _execute_one(config, material, verified, claim, refs, offline, api_key, worker):
+def _execute_one(config, material, verified, claim, refs, api_key, worker):
     request = material["request"]
     request_id = request["request_id"]
     adapter = material["adapter"]
+    runtime = material["runtime"]
     prepared = material["prepared"]
     token = claim["token"]
-    if not offline:
-        # Network catalog verification and isolation probe precede any grant.
-        from .network_isolation import NetworkSandboxedPythonWorker
-        (worker or NetworkSandboxedPythonWorker()).probe()
-        current = OpenRouterAdapter(material["config"])
-        catalog = current.verify_live_snapshot()
-        bound_source = f"{prepared.bound_source}:catalog:{catalog['catalog_sha256']}"
-    else:
-        bound_source = prepared.bound_source
+    # Provider preflight and any isolation proof precede the durable grant.
+    bound_source = runtime.preflight(adapter, prepared, worker)
     verified.admit_verified(request_id, token, config["scope"], prepared.reserve_microusd,
                             refs["manifest_ref"], refs["request_ref"], bound_source=bound_source)
     try:
-        if offline:
-            result = adapter.dispatch(prepared)
-        else:
-            from .network_isolation import isolated_dispatch
-            result = isolated_dispatch(adapter, prepared, api_key, worker=worker)
+        result = runtime.dispatch(adapter, prepared, api_key, worker)
         if not isinstance(result, TransportResult):
             raise BenchmarkError("adapter returned invalid transport result")
         if not result.raw_bytes:
@@ -519,53 +544,25 @@ def _execute_one(config, material, verified, claim, refs, offline, api_key, work
             raise BenchmarkError("published response changed between transport and receipt")
         # Original bounded response is now durable; only then parse it.
         try:
-            parsed = adapter.parse(result, expected_request_id=request_id,
+            parsed = runtime.parse(adapter, result, expected_request_id=request_id,
                                    expected_ids=prepared.expected_ids,
                                    expected_model=material["config"]["model"])
         except Exception as exc:
             parsed = ParsedResponse("invalid", (), None, None, None, None, None, None,
                                     f"parser error: {type(exc).__name__}")
         parsed = _validate_task_predictions(parsed, material)
-        generation = None
-        generation_ref = None
-        provider_identity_status = "synthetic" if offline else "unverified"
-        if not offline and parsed.response_id:
-            try:
-                from .network_isolation import isolated_lookup_generation
-                generation_result = isolated_lookup_generation(adapter, parsed.response_id,
-                                                               api_key, worker=worker)
-                if generation_result.raw_bytes:
-                    generation_ref = put_artifact(verified.artifact_root,
-                                                  generation_result.raw_bytes, "application/json")
-                    read_artifact(verified.artifact_root, generation_ref)
-                generation = adapter.parse_generation(generation_result,
-                                                     expected_response_id=parsed.response_id,
-                                                     expected_model=material["config"]["model"])
-                provider_identity_status = "observed"
-                if (parsed.observed_cost_microusd is not None and
-                        generation["observed_cost_microusd"] is not None and
-                        parsed.observed_cost_microusd != generation["observed_cost_microusd"]):
-                    parsed = replace(parsed, status="invalid", predictions=(),
-                                     observed_cost_microusd=None,
-                                     reason="conflicting provider charge evidence")
-                elif parsed.observed_cost_microusd is None:
-                    parsed = replace(parsed, observed_cost_microusd=generation["observed_cost_microusd"])
-            except Exception as exc:
-                if isinstance(exc, AdapterError) and "identity mismatch" in str(exc):
-                    parsed = replace(parsed, status="invalid", predictions=(),
-                                     reason="provider generation identity mismatch")
-                    provider_identity_status = "identity_error"
-                else:
-                    provider_identity_status = f"unverified:{type(exc).__name__}"
+        supplement = runtime.supplement(adapter, parsed, api_key, worker,
+                                        verified.artifact_root, material["config"])
+        parsed = supplement.parsed
         metadata = {"transport": asdict(result), "parsed": asdict(parsed),
                     "route": prepared.route, "response_sha256": saved["response_ref"].sha256,
                     "receipt_sha256": saved["receipt_ref"].sha256,
-                    "generation": generation,
-                    "provider_identity_status": provider_identity_status,
-                    "generation_response_sha256": generation_ref.sha256 if generation_ref else None}
+                    "generation": supplement.generation,
+                    "provider_identity_status": supplement.identity_status,
+                    "generation_response_sha256": supplement.generation_response_sha256}
         metadata["transport"]["raw_bytes"] = None
         _save_observation(verified, request_id, saved["response_ref"].sha256, metadata)
-        zero_evidence = (_zero_charge_evidence(metadata, offline)
+        zero_evidence = (runtime.zero_charge_evidence(metadata)
                          if parsed.observed_cost_microusd == 0 else None)
         if parsed.observed_cost_microusd is None or (
                 parsed.observed_cost_microusd == 0 and zero_evidence is None):
@@ -608,9 +605,10 @@ def _recover_one(verified, material, *, max_objects):
             prepared = material["prepared"]
             adapter = material["adapter"]
             try:
-                parsed = adapter.parse(result, expected_request_id=request_id,
-                                       expected_ids=prepared.expected_ids,
-                                       expected_model=material["config"]["model"])
+                parsed = material["runtime"].parse(
+                    adapter, result, expected_request_id=request_id,
+                    expected_ids=prepared.expected_ids,
+                    expected_model=material["config"]["model"])
             except Exception as exc:
                 parsed = ParsedResponse("invalid", (), None, None, None, None, None,
                                         None, f"parser error: {type(exc).__name__}")
@@ -620,16 +618,14 @@ def _recover_one(verified, material, *, max_objects):
                        "response_sha256": response_ref.sha256,
                        "receipt_sha256": receipt.sha256,
                        "generation": None, "generation_response_sha256": None,
-                       "provider_identity_status": "synthetic" if getattr(adapter, "offline", False)
-                       else "unverified:recovery"}
+                       "provider_identity_status": material["runtime"].recovery_identity_status()}
             _save_observation(verified, request_id, response_ref.sha256, payload)
             observation = payload
     if row["state"] == "outcome_unknown":
         verified.recover_response(request_id, token, receipt_ref=receipt)
     else:
         charge = observation["parsed"]["observed_cost_microusd"] if observation else None
-        zero_evidence = (_zero_charge_evidence(observation,
-                         material["adapter"].__class__ is SyntheticAdapter)
+        zero_evidence = (material["runtime"].zero_charge_evidence(observation)
                          if charge == 0 else None)
         if charge is None or (charge == 0 and zero_evidence is None):
             verified.recover_response(request_id, token, receipt_ref=receipt,
@@ -655,10 +651,14 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
     """Execute each configuration in declared order, concurrently across configs."""
     config, plan, binding, materials, offline = _load(config_path, adapter)
     _auth(config, plan, binding, len(materials))
-    if not offline:
-        api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
-        if not api_key:
-            raise BenchmarkError("OPENROUTER_API_KEY is required before live admission")
+    credentials = {}
+    for material in materials:
+        config_id = material["request"]["config_id"]
+        if config_id not in credentials:
+            try:
+                credentials[config_id] = material["runtime"].credential(api_key)
+            except ValueError as exc:
+                raise BenchmarkError(str(exc)) from exc
     verified = _initialize(config, binding, materials)
     if _control(verified) != "running":
         result = status(config_path, adapter=adapter)
@@ -718,7 +718,7 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
                     continue
                 active_provider[selected_provider] += 1
                 future = pool.submit(_execute_one, config, selected, verified, claim,
-                                     refs[request_id], offline, api_key, worker)
+                                     refs[request_id], credentials[selected["request"]["config_id"]], worker)
                 future_info[future] = (selected["request"]["config_id"], selected_provider)
                 claim_by_future[future] = claim
                 del held_claims[request_id]
@@ -750,7 +750,7 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
                     continue
                 active_provider[selected_provider] += 1
                 future = pool.submit(_execute_one, config, selected, verified, claim,
-                                     refs[claim["request_id"]], offline, api_key, worker)
+                                     refs[claim["request_id"]], credentials[selected_config], worker)
                 future_info[future] = (selected_config, selected_provider)
                 claim_by_future[future] = claim
                 pending[selected_config] = None
@@ -961,8 +961,7 @@ def _export_operations_loaded(config, binding, materials):
             state = verified.execution.get(request_id)
         except CoordinatorError:
             state = None
-        if state:
-            _refs(verified, material)
+        saved = _saved_refs(verified, material) if state else None
         row = state["request"] if state else None
         entry = state["execution"] if state else None
         operation = {"request_id": request_id, "config_id": request["config_id"],
@@ -971,7 +970,10 @@ def _export_operations_loaded(config, binding, materials):
                      "ids": [item["id"] for item in request["items"]],
                      "state": row["state"] if row else "never_sent",
                      "attempt_id": row["attempt_id"] if row else None,
-                     "route": material["prepared"].route,
+                     "route": saved["manifest"]["route"] if saved else material["prepared"].route,
+                     "adapter_source_sha256": saved["manifest"].get("adapter_source_sha256") if saved else None,
+                     "runtime_source_sha256": saved["manifest"].get("runtime_source_sha256") if saved else None,
+                     "transport_source_sha256": saved["manifest"].get("transport_source_sha256") if saved else None,
                      "blocked_reason": material["adapter"].reason if isinstance(
                          material["adapter"], UnsupportedAdapter) else None,
                      "provider": material["adapter"].provider,

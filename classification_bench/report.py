@@ -1,6 +1,7 @@
 """Private, self-contained HTML report from validated offline evidence."""
 
 from collections import Counter, defaultdict
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from html import escape
 import json
 import math
@@ -32,8 +33,147 @@ def _table(headers, rows):
 
 
 _MEASUREMENTS = ("duration_seconds", "provider_generation_seconds", "pure_inference_seconds",
-                 "input_tokens", "output_tokens", "reasoning_tokens", "cache_tokens",
                  "observed_cost_micro_usd", "estimated_cost_micro_usd", "unresolved_hold_micro_usd")
+
+
+def _count(value):
+    return value if type(value) is int and value >= 0 else None
+
+
+def _usage_count(operation, usage, flat, nested_parent=None, nested_key=None):
+    """Prefer the saved raw usage path; never turn a bad value into zero."""
+    source = None
+    if nested_parent is not None and nested_parent in usage:
+        details = usage[nested_parent]
+        if not isinstance(details, dict):
+            return None, f"{nested_parent} is malformed"
+        if nested_key in details:
+            value = _count(details[nested_key])
+            if value is None:
+                return None, f"{nested_parent}.{nested_key} is malformed"
+            source = f"{nested_parent}.{nested_key}"
+    if source is None and flat in usage:
+        value = _count(usage[flat])
+        if value is None:
+            return None, f"usage.{flat} is malformed"
+        source = f"usage.{flat}"
+    if source is None:
+        value = _count(operation.get(flat))
+        if value is None:
+            return None, f"{flat} unavailable"
+        source = f"operation.{flat}"
+    return value, None
+
+
+def _price(pricing, key):
+    value = pricing.get(key)
+    if not isinstance(value, str):
+        return None
+    try:
+        number = Decimal(value)
+    except InvalidOperation:
+        return None
+    return number if number.is_finite() and number >= 0 else None
+
+
+def _derived_telemetry(operation, config):
+    """Return a report view; preserve the verified operation object unchanged."""
+    view = dict(operation)
+    usage = operation.get("usage")
+    notes = []
+    if usage is None:
+        usage = {}
+    elif not isinstance(usage, dict):
+        usage = {}
+        notes.append("raw usage is malformed")
+    for target, flat, parent, nested in (
+        ("input_tokens", "prompt_tokens", None, None),
+        ("output_tokens", "completion_tokens", None, None),
+        ("reasoning_tokens", "reasoning_tokens", "completion_tokens_details", "reasoning_tokens"),
+        ("cache_tokens", "cached_tokens", "prompt_tokens_details", "cached_tokens"),
+    ):
+        value, note = _usage_count(operation, usage, flat, parent, nested)
+        if value is None and target in operation and flat != target and flat not in usage and parent is None:
+            value = _count(operation[target])
+            note = None if value is not None else note
+        if value is None and target in operation and parent is not None and parent not in usage and flat not in usage:
+            value = _count(operation[target])
+            note = None if value is not None else note
+        if (parent is not None and isinstance(usage.get(parent), dict) and nested in usage[parent]
+                and value is not None and operation.get(target) is not None and operation[target] != value):
+            notes.append(f"raw {parent}.{nested} overrides conflicting flat {target}")
+        view[target] = value
+        if note:
+            notes.append(note)
+    if (view["reasoning_tokens"] is not None and view["output_tokens"] is not None and
+            view["reasoning_tokens"] > view["output_tokens"]):
+        view["reasoning_tokens"] = None
+        notes.append("reasoning tokens exceed completion tokens")
+    if (view["cache_tokens"] is not None and view["input_tokens"] is not None and
+            view["cache_tokens"] > view["input_tokens"]):
+        view["cache_tokens"] = None
+        notes.append("cached tokens exceed prompt tokens")
+    view["estimated_cost_micro_usd"] = None
+    view["_estimate_basis"] = "unavailable"
+    view["_snapshot_hash"] = None
+    settings = config.get("settings", {})
+    snapshot = settings.get("endpoint_snapshot") if isinstance(settings, dict) else None
+    if settings.get("adapter") != "openrouter" or operation.get("cost_currency", "USD") != "USD":
+        reason = "No USD OpenRouter endpoint snapshot applies."
+    elif not isinstance(snapshot, dict) or not isinstance(snapshot.get("pricing"), dict):
+        reason = "Frozen endpoint pricing is unavailable."
+    else:
+        view["_snapshot_hash"] = _digest(snapshot)
+        pricing = snapshot["pricing"]
+        prompt, completion, request = (_price(pricing, name) for name in ("prompt", "completion", "request"))
+        no_tool_search_route = (config.get("model"), settings.get("provider")) == (
+            "openai/gpt-4.1-nano", "openai")
+        supported = {"prompt", "completion", "request", "input_cache_read"}
+        extras = [key for key in pricing if key not in supported and _price(pricing, key) != Decimal(0)
+                  and not (key == "web_search" and no_tool_search_route)]
+        details = usage.get("prompt_tokens_details")
+        write_reported = isinstance(details, dict) and "cache_write_tokens" in details
+        if write_reported:
+            writes = _count(details["cache_write_tokens"])
+        else:
+            writes = None
+        returned_model = operation.get("returned_model")
+        identity_error = (operation.get("provider_identity_status") == "identity_error" or
+                          operation.get("reason") in ("returned provider mismatch", "returned model mismatch",
+                                                      "provider generation identity mismatch"))
+        if returned_model is not None and returned_model != config.get("model"):
+            reason = "Returned model differs from the frozen priced model."
+        elif identity_error:
+            reason = "Provider identity evidence conflicts with the requested route."
+        elif snapshot.get("model_id") != config.get("model") or snapshot.get("provider_tag") != settings.get("provider"):
+            reason = "Frozen endpoint identity does not match the configuration."
+        elif any(value is None for value in (view["input_tokens"], view["output_tokens"])):
+            reason = "Prompt or completion token count is unavailable."
+        elif details is not None and not isinstance(details, dict):
+            reason = "Cache detail object is malformed."
+        elif writes is None and (write_reported or not no_tool_search_route):
+            reason = "Cache write count is unavailable or malformed."
+        elif writes is not None and writes > 0:
+            reason = "Cache writes need a verified write and storage price."
+        elif extras:
+            reason = "Frozen endpoint pricing has unsupported nonzero components."
+        elif any(value is None for value in (prompt, completion, request)):
+            reason = "Frozen endpoint prompt, completion or request price is invalid."
+        else:
+            value = (Decimal(view["input_tokens"]) * prompt +
+                     Decimal(view["output_tokens"]) * completion + request)
+            view["estimated_cost_micro_usd"] = int((value * 1_000_000).to_integral_value(rounding=ROUND_CEILING))
+            view["_estimate_basis"] = (f"Standard input-rate token-price estimate: ceil(1,000,000 × "
+                                       f"(({view['input_tokens']} prompt × {prompt} USD) + "
+                                       f"({view['output_tokens']} completion × {completion} USD) + "
+                                       f"{request} USD request fee)); cache savings excluded; "
+                                       "reasoning is included in completion. "
+                                       "Frozen requested-route prices; actual serving endpoint price is unverified.")
+            reason = None
+    if reason:
+        view["_estimate_basis"] = reason
+    view["_telemetry_note"] = "; ".join(notes) or "none"
+    return view
 
 
 def _svg(title, description, contents, chart_id, height, width=760):
@@ -139,11 +279,22 @@ def _operation_summary(records, planned_count, currency):
                       r.get('returned_model') or 'unavailable',
                       r.get('provider_identity_status') or 'unavailable',
                       r.get('receipt_sha256') or 'unavailable') for r in records]
+    telemetry_rows = [
+        (r["request_id"], _number(r.get("input_tokens")), _number(r.get("output_tokens")),
+         _number(r.get("reasoning_tokens")), _number(r.get("cache_tokens")),
+         _number(r.get("observed_cost_micro_usd")), _number(r.get("estimated_cost_micro_usd")),
+         r.get("_estimate_basis") or "unavailable", r.get("_snapshot_hash") or "unavailable",
+         r.get("_telemetry_note") or "none") for r in records]
     return (f"<p>Request lifecycle: {_h(state_text)}. Parsed outcomes: {_h(parsed_text)}. "
             f"{subscription}</p>") + _table(
         ("Measure", "Recorded value"), cells) + _table(
         ("Request ID", "Requested provider", "Observed provider", "Returned model",
-         "Provider identity evidence", "Verified receipt SHA-256"), identity_rows)
+         "Provider identity evidence", "Verified receipt SHA-256"), identity_rows) + (
+        "<p>Token detail comes from saved usage. Token-price estimates use the frozen endpoint snapshot at the standard input rate, exclude cache savings, and are separate from observed charges. "
+        "Unavailable values are omitted from totals.</p>" + _table(
+            ("Request ID", "Input tokens", "Output tokens", "Reasoning tokens", "Cached tokens",
+             f"Observed charge ({currency})", f"Price estimate ({currency})", "Estimate basis or limit",
+             "Endpoint snapshot SHA-256", "Telemetry note"), telemetry_rows))
 
 
 def _observed_outcome(key, invalid, supplied, operation):
@@ -248,7 +399,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
         for entry in condition["passes"]:
             repeat = entry["repeat"]
             requests = [r for r in plan["requests"] if (r["config_id"], r["prompt_id"], r["repeat"]) == (cid, pid, repeat)]
-            ops = [o for r in requests for o in operation_map[r["request_id"]]]
+            ops = [_derived_telemetry(o, config) for r in requests for o in operation_map[r["request_id"]]]
             charges = [o["observed_cost_micro_usd"] for o in ops if o.get("observed_cost_micro_usd") is not None]
             costs[repeat] = sum(charges) if charges else None
             metadata = {key: next((o.get(key) for o in ops if o.get(key) is not None), None)
@@ -376,6 +527,8 @@ def generate_report(task, plan, labels, predictions, operations=None):
             + "<footer><h2>Provenance</h2><p>Canonical JSON SHA-256 digests bind the task, plan, references, selected prediction set and any supplied operation records. "
             "The evaluator validates planned positions and predictions; the caller is responsible for verifying operation records. "
             "This file includes private inputs and reference labels. Keep it local.</p>"
+            "<p>Token fields follow <a href='https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion'>OpenRouter's chat response schema</a>. "
+            "Cache reads and writes follow <a href='https://openrouter.ai/docs/guides/best-practices/prompt-caching'>OpenRouter's caching documentation</a>.</p>"
             + _table(("Source", "SHA-256"), source_rows)
             + "</footer><script>" + script + "</script></body></html>")
 
