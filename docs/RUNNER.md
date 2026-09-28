@@ -2,6 +2,12 @@
 
 The matrix runner reuses the [atomic ledger](EXECUTION_API.md) and [verified artifact store](VERIFIED_EXECUTION.md). One orchestrator runs independent configurations concurrently. A private per-database process lock prevents a second orchestrator from multiplying the provider concurrency limit. Configuration declaration order, then prompt, repeat and batch order, is preserved within each configuration.
 
+## Use your own task
+
+Follow the [custom task walkthrough](CUSTOM_TASK_WALKTHROUGH.md) to define your own task, inputs, separate references, prompts, model configurations, repeat count and batch size. It includes a complete offline command sequence and the additional configuration and authorization required for OpenRouter.
+
+`scripts.offline_demo` and `scripts.prepare_run` are convenience helpers for the two bundled fixtures. They are not the generic task interface. The `classification_bench` commands accept your own configuration files directly.
+
 ## Reproduce without a provider
 
 Python 3.10+ and the standard library are sufficient for synthetic execution and reporting. Run from the repository root; choose fresh output directories:

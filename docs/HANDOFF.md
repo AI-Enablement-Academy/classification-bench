@@ -1,8 +1,8 @@
-# Separate-task handoff
+# Implementation handoff
 
-Verified on 2026-09-28. The local checkout is `/Users/adamkovacs/Documents/codebuild/classification-bench`, on `main`, with remote `https://github.com/AI-Enablement-Academy/classification-bench.git`. GitHub visibility is private. Before these documentation updates, local HEAD and `origin/main` both pointed to `78c253e`, with no working-tree changes. The directory is already a Git checkout; do not create a nested clone.
+Current implementation checkpoint: `312a632`, verified on 2026-09-28 in `/Users/adamkovacs/Documents/codebuild/classification-bench`. The private repository is `AI-Enablement-Academy/classification-bench`. The generic matrix runner and local report are implemented, 154 offline tests pass, and the integrated adapter identity change passed independent review. See [implementation status](IMPLEMENTATION_STATUS.md) for verification limits and [operator workflow](RUNNER.md) for commands.
 
-Use [the goal description](NEXT_TASK_GOAL.md) as the new task's starting instruction. This handoff contains enough context to begin without the source conversation. Read [benchmark lessons](BENCHMARK_LESSONS.md) before designing an adapter or report.
+The goal remains [NEXT_TASK_GOAL.md](NEXT_TASK_GOAL.md). Remaining acceptance gates are live validation of the updated identity path, report visual inspection and second-operator reproduction. No additional model calls are scheduled or proposed. The user directed work toward the generic product; the active candidate-experience benchmark remains separate.
 
 ## Ownership
 
@@ -10,7 +10,7 @@ The separate task owns implementation and documentation in this repository. The 
 
 No agent from the original task is assigned to implement this private repository after handoff. If another task is already writing here, coordinate file ownership or use an isolated worktree before editing. Do not duplicate active case-study requests.
 
-## Verified implementation checkpoint
+## Original offline checkpoint (superseded)
 
 The implementation at `78c253e` includes:
 
@@ -21,15 +21,15 @@ The implementation at `78c253e` includes:
 - A one-command simulated runner, explicit recovery after interrupted publication and label-free prediction export.
 - A hash-verified replay of one existing 60-record case-study result, plus an offline Inspect/promptfoo comparison.
 
-The checkpoint had 78 passing offline tests, including real macOS isolation and process-crash recovery tests. Run them again in the new task. The simulation uses fake transport and accounting. It does not enforce real provider spending, authenticate a model, or prove a live adapter. Live provider integrations and a local report UI are still missing.
+The checkpoint had 78 passing offline tests, including real macOS isolation and process-crash recovery tests. Run them again in the new task. The simulation uses fake transport and accounting. It does not enforce real provider spending, authenticate a model, or prove a live adapter. Live provider integrations and a local report UI were missing at that checkpoint; both are now implemented, with verification limits described above.
 
-## Start here
+## Continue here
 
-1. Read `AGENTS.md` and [README](../README.md), then [roadmap](ROADMAP.md), [architecture](ARCHITECTURE.md) and [formats](FORMATS.md).
-2. Inspect [simulated execution](SIMULATED_RUN.md), [verified execution](VERIFIED_EXECUTION.md), [atomic execution](EXECUTION_API.md), [budget API](BUDGET_API.md), [isolation](ISOLATION.md) and [evidence contracts](EVIDENCE_CONTRACTS.md).
-3. Run `python3 -m unittest discover -s tests -v`. On macOS, OS isolation tests must run with the permissions they need; distinguish environment restrictions from product failures.
-4. Make a bounded first-adapter plan with explicit capability, identity, credential, isolation, budget and recovery boundaries. Implement and test it offline before proposing an authorized live smoke.
-5. Connect the verified exported evidence to offline evaluation and a local report. Preserve the existing simulated workflow and historical compatibility while extending it.
+1. Read `AGENTS.md`, [README](../README.md), [benchmark lessons](BENCHMARK_LESSONS.md), and the [acceptance audit](ACCEPTANCE_AUDIT.md).
+2. Use [RUNNER.md](RUNNER.md), the [custom task walkthrough](CUSTOM_TASK_WALKTHROUGH.md), and [FORMATS.md](FORMATS.md) for generic task configuration and operation. The [adapter runtime contract](ADAPTER_RUNTIME.md) covers future providers without scheduler changes.
+3. Run `python3 -m unittest discover -s tests -v` before code changes. The latest completed run passed 154 tests with no skips, including real macOS isolation and recovery checks.
+4. Follow [OPERATOR_CHECK.md](OPERATOR_CHECK.md) for independent reproduction and report inspection. Do not claim these checks passed without observations.
+5. Preserve the inference authorization boundary. Existing completed attempts are evidence, not permission to dispatch again. Do not repeat the original implementation or expand the live experiment to fill a release gate.
 
 See [framework comparison](FRAMEWORK_COMPARISON.md) before starting another framework survey. See [source import verification](CASE_IMPORT_VERIFICATION.md) and [provenance](PROVENANCE.md) before reusing source-project artifacts.
 
