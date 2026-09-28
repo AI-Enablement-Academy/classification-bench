@@ -1,6 +1,6 @@
 # Proposed first live smoke
 
-Status: prepared, not authorized or dispatched. The adapter and runner have offline tests. No successful live authentication, serving, route observation or billing has been demonstrated. The candidate-experience source study and its budgets remain separate.
+Status: the operator authorized this three-request smoke on 2026-09-28 with a $0.50 cap and pause at exhaustion. A private run-bound authorization file has been recorded and verified. Dispatch is pending an operator-supplied credential; `OPENROUTER_API_KEY` was absent from the execution environment. Current public endpoint and OS-isolation preflight checks passed. No inference has been dispatched. The adapter and runner have offline tests. No successful live authentication, serving, route observation or billing has been demonstrated. The candidate-experience source study and its budgets remain separate.
 
 ## Concrete proposal
 
@@ -43,7 +43,7 @@ After code, offline tests and the preview are reviewed, request explicit approva
 }
 ```
 
-The file belongs at the `authorization_file` path in the generated config. It is intentionally absent in the prepared proposal. Do not paste the credential into a command argument, config, artifact or repository file. A local authorization JSON records the operator's decision; it cannot authenticate an external payer. Changing the experiment requires a new preview and grant. Raising an existing cap uses the audited [budget-increase command](RUNNER.md), not editing the original authorization.
+The file belongs at the `authorization_file` path in the generated config. Preparation does not create this file. For the approved local smoke, it was created only after explicit operator authorization. Do not paste the credential into a command argument, config, artifact or repository file. A local authorization JSON records the operator's decision; it cannot authenticate an external payer. Changing the experiment requires a new preview and grant. Raising an existing cap uses the audited [budget-increase command](RUNNER.md), not editing the original authorization.
 
 ## Authorized execution and acceptance
 

@@ -25,7 +25,7 @@ The live child permits TCP443 and DNS under an OS file boundary. The trusted HTT
 
 ## Pending gates
 
-The [three-request smoke proposal](LIVE_SMOKE_PLAN.md) has no authorization or credential. Its suggested $0.50 cap is configurable; the observed catalog yields $0.314889 in summed conservative reservations. Only public endpoint metadata was fetched. No model request, credential lookup/transfer, public deployment or dataset publication occurred.
+The [three-request smoke](LIVE_SMOKE_PLAN.md) was explicitly authorized on 2026-09-28 at a $0.50 cap with pause at exhaustion. Its run-bound authorization file is verified; execution is pending an operator-supplied credential because the environment variable is absent. Public endpoint and OS-isolation preflight passed. The cap is configurable; the observed catalog yields $0.314889 in summed conservative reservations. Only public endpoint metadata was fetched. Only credential availability was checked, without exposing any value. No model request, credential transfer, public deployment or dataset publication occurred.
 
 The following remain unverified: live serving and authentication, actual returned model/provider evidence, provider billing and timing behavior, browser rendering, and a second human operator's reproduction. Missing generation metadata is explicitly unverified, not silently inferred from the requested route. An observed completion charge may settle independently; missing or conflicting charge evidence retains a hold.
 
