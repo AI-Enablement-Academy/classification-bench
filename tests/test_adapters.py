@@ -1,6 +1,7 @@
 """Offline OpenRouter adapter tests; fake HTTP cannot initiate inference."""
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import unittest
 
@@ -42,6 +43,22 @@ def completion(*, model=MODEL, content=None, cost=0.000021):
                        "choices": [{"finish_reason": "stop", "message": {"content": content}}],
                        "usage": {"prompt_tokens": 5, "completion_tokens": 4,
                                  "cost": cost}}).encode()
+
+
+def model_metadata(*, requested=MODEL, canonical=MODEL):
+    return json.dumps({"data": {"id": requested, "canonical_slug": canonical}}).encode()
+
+
+def bound_config(*, canonical="example/model-v1-2026-01-01"):
+    config, _, _, _ = fixture()
+    raw = model_metadata(canonical=canonical)
+    config["settings"]["endpoint_snapshot"]["model_identity"] = {
+        "requested_id": MODEL, "canonical_id": canonical,
+        "source_url": f"https://openrouter.ai/api/v1/model/{MODEL}",
+        "observed_at": "2026-09-28T11:00:00Z",
+        "response_sha256": hashlib.sha256(raw).hexdigest(),
+        "response_json": raw.decode("utf-8")}
+    return config
 
 
 class OpenRouterTests(unittest.TestCase):
@@ -165,6 +182,79 @@ class OpenRouterTests(unittest.TestCase):
         with self.assertRaisesRegex(AdapterError, "identity"):
             adapter.parse_generation(result, expected_response_id="wrong", expected_model=MODEL)
 
+    def test_generation_canonical_requires_frozen_public_binding(self):
+        canonical = "example/model-v1-2026-01-01"
+        raw = json.dumps({"data": {"id": "generation-1", "model": canonical,
+                                   "provider_name": "Test Provider", "total_cost": 0.000021}}).encode()
+        result = TransportResult(raw, 200, 1)
+        with self.assertRaisesRegex(AdapterError, "identity mismatch"):
+            self.adapter().parse_generation(result, expected_response_id="generation-1",
+                                            expected_model=MODEL)
+        bound = self.adapter(bound_config(canonical=canonical))
+        parsed = bound.parse_generation(result, expected_response_id="generation-1",
+                                        expected_model=MODEL)
+        self.assertEqual(parsed["returned_model"], canonical)
+        wrong = json.dumps({"data": {"id": "generation-1", "model": "example/model-v1-2026-02-01",
+                                    "provider_name": "Test Provider"}}).encode()
+        with self.assertRaisesRegex(AdapterError, "identity mismatch"):
+            bound.parse_generation(TransportResult(wrong, 200, 1),
+                                   expected_response_id="generation-1", expected_model=MODEL)
+
+    def test_identity_capture_and_live_drift_are_bound_to_public_bytes(self):
+        config, _, _, _ = fixture()
+        endpoint = config["settings"]["endpoint_snapshot"]
+        catalog = json.dumps({"data": {"id": MODEL, "endpoints": [
+            {"tag": PROVIDER, "model_id": MODEL, **{k: endpoint[k] for k in (
+                "max_prompt_tokens", "max_completion_tokens", "supported_parameters", "pricing")}}]}}).encode()
+        canonical = "example/model-v1-2026-01-01"
+        raw_identity = model_metadata(canonical=canonical)
+        urls = []
+        def endpoint_fetch(url):
+            urls.append(url)
+            return catalog
+        def identity_fetch(url):
+            urls.append(url)
+            return raw_identity
+        snapshot = fetch_endpoint_snapshot(MODEL, PROVIDER, catalog_fetch=endpoint_fetch,
+                                           model_fetch=identity_fetch, now=lambda: NOW)
+        self.assertEqual(urls, [f"https://openrouter.ai/api/v1/models/{MODEL}/endpoints",
+                                f"https://openrouter.ai/api/v1/model/{MODEL}"])
+        identity = snapshot["model_identity"]
+        self.assertEqual(identity["canonical_id"], canonical)
+        self.assertEqual(identity["response_json"].encode(), raw_identity)
+        self.assertEqual(identity["response_sha256"], hashlib.sha256(raw_identity).hexdigest())
+        config["settings"]["endpoint_snapshot"] = snapshot
+        adapter = self.adapter(config, catalog_fetch=endpoint_fetch, model_fetch=identity_fetch)
+        checked = adapter.verify_live_snapshot()
+        self.assertEqual(checked["identity_response_sha256"], identity["response_sha256"])
+        self.assertEqual(checked["identity_source_url"], identity["source_url"])
+        drifted = self.adapter(config, catalog_fetch=endpoint_fetch,
+                               model_fetch=lambda url: model_metadata(canonical="example/model-v1-2026-02-01"))
+        with self.assertRaisesRegex(AdapterError, "identity drifted"):
+            drifted.verify_live_snapshot()
+
+    def test_identity_binding_rejects_missing_malformed_or_changed_raw(self):
+        config = bound_config()
+        identity = config["settings"]["endpoint_snapshot"]["model_identity"]
+        identity["response_sha256"] = "0" * 64
+        with self.assertRaisesRegex(AdapterError, "disagrees"):
+            self.adapter(config)
+        config = bound_config()
+        identity = config["settings"]["endpoint_snapshot"]["model_identity"]
+        del identity["response_json"]
+        with self.assertRaisesRegex(AdapterError, "missing or unknown"):
+            self.adapter(config)
+        endpoint = fixture()[0]["settings"]["endpoint_snapshot"]
+        catalog = json.dumps({"data": {"id": MODEL, "endpoints": [
+            {"tag": PROVIDER, "model_id": MODEL, **{k: endpoint[k] for k in (
+                "max_prompt_tokens", "max_completion_tokens", "supported_parameters", "pricing")}}]}}).encode()
+        for response, reason in ((b'{}', "invalid model identity response"),
+                                 (model_metadata(requested="example/other"), "requested ID mismatch"),
+                                 (model_metadata(canonical="bad/"), "exact OpenRouter slug")):
+            with self.subTest(response=response), self.assertRaisesRegex(AdapterError, reason):
+                fetch_endpoint_snapshot(MODEL, PROVIDER, catalog_fetch=lambda url: catalog,
+                                        model_fetch=lambda url: response, now=lambda: NOW)
+
     def test_incomplete_read_keeps_partial_bytes_and_redirect_is_refused(self):
         class Partial:
             def read(self, count):
@@ -187,9 +277,11 @@ class OpenRouterTests(unittest.TestCase):
             "supported_parameters": ["max_tokens"],
             "pricing": {"prompt": "0.000001", "completion": "0.000002", "discount": 0}}]}}).encode()
         snapshot = fetch_endpoint_snapshot(MODEL, PROVIDER, catalog_fetch=lambda url: raw,
+                                           model_fetch=lambda url: model_metadata(),
                                            now=lambda: NOW)
         self.assertEqual(snapshot["max_prompt_tokens"], 100)
         self.assertEqual(snapshot["pricing"]["request"], "0")
+        self.assertEqual(snapshot["model_identity"]["canonical_id"], MODEL)
         config, plan, req, prompt = fixture()
         config["settings"]["endpoint_snapshot"] = snapshot
         del config["settings"]["temperature"]
@@ -238,7 +330,8 @@ class OpenRouterTests(unittest.TestCase):
             "supported_parameters": ["max_tokens"],
             "pricing": {"prompt": "0.000001", "completion": "0.000002"}}]}}).encode()
         with self.assertRaisesRegex(AdapterError, "max_prompt_tokens"):
-            fetch_endpoint_snapshot(MODEL, PROVIDER, catalog_fetch=lambda url: raw, now=lambda: NOW)
+            fetch_endpoint_snapshot(MODEL, PROVIDER, catalog_fetch=lambda url: raw,
+                                    model_fetch=lambda url: model_metadata(), now=lambda: NOW)
 
     def test_base_provider_with_variants_is_ambiguous(self):
         endpoint = {"model_id": MODEL, "context_length": 100, "max_completion_tokens": 20,
@@ -247,8 +340,10 @@ class OpenRouterTests(unittest.TestCase):
         raw = json.dumps({"data": {"id": MODEL, "endpoints": [
             {"tag": "deepinfra", **endpoint}, {"tag": "deepinfra/turbo", **endpoint}]}}).encode()
         with self.assertRaisesRegex(AdapterError, "variants"):
-            fetch_endpoint_snapshot(MODEL, "deepinfra", catalog_fetch=lambda url: raw, now=lambda: NOW)
+            fetch_endpoint_snapshot(MODEL, "deepinfra", catalog_fetch=lambda url: raw,
+                                    model_fetch=lambda url: model_metadata(), now=lambda: NOW)
         snapshot = fetch_endpoint_snapshot(MODEL, "deepinfra/turbo", catalog_fetch=lambda url: raw,
+                                           model_fetch=lambda url: model_metadata(),
                                            now=lambda: NOW)
         self.assertEqual(snapshot["provider_tag"], "deepinfra/turbo")
 

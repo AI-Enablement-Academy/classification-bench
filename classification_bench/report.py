@@ -274,9 +274,12 @@ def _operation_summary(records, planned_count, currency):
             label = "Observed synthetic accounting"
         cells.append((label, f"{_number(sum(values), suffix)} across {len(values)} request(s)" if values else "unavailable"))
     subscription = "Synthetic accounting is not a provider charge." if currency == "SYN units" else "Subscription cost: unavailable."
-    identity_rows = [(r['request_id'], r.get('provider') or 'unavailable',
-                      r.get('returned_provider') or 'unavailable',
+    identity_rows = [(r['request_id'], r.get('model') or 'unavailable',
                       r.get('returned_model') or 'unavailable',
+                      r.get('frozen_canonical_model') or 'unavailable',
+                      r.get('generation_returned_model') or 'unavailable',
+                      r.get('provider') or 'unavailable',
+                      r.get('returned_provider') or 'unavailable',
                       r.get('provider_identity_status') or 'unavailable',
                       r.get('receipt_sha256') or 'unavailable') for r in records]
     telemetry_rows = [
@@ -287,8 +290,12 @@ def _operation_summary(records, planned_count, currency):
          r.get("_telemetry_note") or "none") for r in records]
     return (f"<p>Request lifecycle: {_h(state_text)}. Parsed outcomes: {_h(parsed_text)}. "
             f"{subscription}</p>") + _table(
-        ("Measure", "Recorded value"), cells) + _table(
-        ("Request ID", "Requested provider", "Observed provider", "Returned model",
+        ("Measure", "Recorded value"), cells) + (
+        "<p>Frozen canonical model comes from the enrolled endpoint snapshot. "
+        "Generation returned model comes from saved generation metadata. "
+        "Unavailable means that evidence did not provide the value.</p>") + _table(
+        ("Request ID", "Requested model", "Completion returned model", "Frozen canonical model",
+         "Generation returned model", "Requested provider", "Observed provider",
          "Provider identity evidence", "Verified receipt SHA-256"), identity_rows) + (
         "<p>Token detail comes from saved usage. Token-price estimates use the frozen endpoint snapshot at the standard input rate, exclude cache savings, and are separate from observed charges. "
         "Unavailable values are omitted from totals.</p>" + _table(

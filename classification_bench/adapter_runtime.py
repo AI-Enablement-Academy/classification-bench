@@ -115,7 +115,10 @@ class OpenRouterRuntime:
         from .network_isolation import NetworkSandboxedPythonWorker
         (worker or NetworkSandboxedPythonWorker()).probe()
         catalog = adapter.verify_live_snapshot()
-        return f"{prepared.bound_source}:catalog:{catalog['catalog_sha256']}"
+        source = f"{prepared.bound_source}:catalog:{catalog['catalog_sha256']}"
+        if "identity_response_sha256" in catalog:
+            source += f":identity:{catalog['identity_response_sha256']}"
+        return source
 
     def dispatch(self, adapter, prepared, api_key, worker):
         from .network_isolation import isolated_dispatch

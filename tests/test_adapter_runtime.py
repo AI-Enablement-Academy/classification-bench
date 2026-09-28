@@ -5,9 +5,9 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
-from classification_bench.adapter_runtime import OfflineRuntime, registry
+from classification_bench.adapter_runtime import OfflineRuntime, OpenRouterRuntime, registry
 from classification_bench.adapters import ParsedResponse, PreparedRequest, TransportResult
 from classification_bench.benchmark import (_execute_one, _initialize, _load,
                                             export_predictions, preview, report_snapshot, run)
@@ -84,6 +84,17 @@ class RuntimeTests(unittest.TestCase):
         registry.register("other-runtime", OfflineRuntime(OtherAdapter,
                           identity_status="fixture-observed", zero_charge_source="fixture:zero"))
         self.addCleanup(registry.unregister, "other-runtime")
+
+    def test_live_preflight_binds_fresh_catalog_and_canonical_identity_hashes(self):
+        adapter = Mock()
+        adapter.verify_live_snapshot.return_value = {
+            "catalog_sha256": "a" * 64, "identity_response_sha256": "b" * 64}
+        worker = Mock()
+        prepared = PreparedRequest(b"{}", 1, "frozen-snapshot", "route", "request", ("i",))
+        source = OpenRouterRuntime().preflight(adapter, prepared, worker)
+        self.assertEqual(source, "frozen-snapshot:catalog:" + "a" * 64 + ":identity:" + "b" * 64)
+        worker.probe.assert_called_once_with()
+        adapter.verify_live_snapshot.assert_called_once_with()
 
     def test_distinct_runtime_uses_unchanged_scheduler_and_rejects_controls(self):
         self.assertEqual(preview(self.config_path)["request_count"], 1)

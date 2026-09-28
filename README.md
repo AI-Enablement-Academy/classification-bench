@@ -2,9 +2,9 @@
 
 A reusable benchmark core for categorical classification tasks: define the task, compare prompts and model configurations, and measure both agreement and repeatability.
 
-**Current status: matrix runner and local report implemented and offline tested; authorized smoke attempted; live verification remains incomplete.** The runner previews exact work, runs independent configurations under one shared ledger, preserves uncertain attempts, and supports user-selected budget pause or stop. The OpenRouter adapter captured two live responses and charges after a sandbox correction; one earlier attempt remains unknown and both returned outputs failed strict validation. See the [smoke evidence](docs/LIVE_SMOKE_RESULT.md). Synthetic examples test the software, not model quality or nondeterminism.
+**Current status: the generic matrix runner and private local report are implemented; 154 offline tests pass.** Define categorical tasks, compare configurations and prompts, choose repeats and batches, preview exact work, and execute under a shared budget. Both smoke and full runs support user-selected caps and budget exhaustion policies: pause for an explicit increase, or stop.
 
-Start with the [operator workflow](docs/RUNNER.md), [configurable smoke plan](docs/LIVE_SMOKE_PLAN.md) and [implementation status](docs/IMPLEMENTATION_STATUS.md).
+Start with the [operator workflow](docs/RUNNER.md), [task and result formats](docs/FORMATS.md), and [implementation status and remaining verification gates](docs/IMPLEMENTATION_STATUS.md). Synthetic examples test the software, not model quality or nondeterminism.
 
 For a new implementation task, start with the [handoff](docs/HANDOFF.md), [goal description](docs/NEXT_TASK_GOAL.md) and [benchmark lessons](docs/BENCHMARK_LESSONS.md).
 
@@ -78,7 +78,7 @@ Each command runs a full synthetic matrix and writes a private local HTML report
 
 The same runner accepts an [OpenRouter configuration](docs/OPENROUTER.md) after an explicit run-bound authorization. Caps are operator settings for both smoke and full runs. At exhaustion, `pause` preserves the queue for an audited cap increase; `stop` permanently stops new dispatches for that run. Neither releases unknown charges. The original `simulate` workflow remains available and uses its existing offline sandbox.
 
-Live serving, hosting-provider attribution and billing remain unverified until an authorized smoke. The HTTPS child enforces a tested macOS file boundary; other operating systems fail closed for live execution. Subscription CLI and native specialist adapters remain future work, with unsupported configurations visible in the roster. No public deployment or source-project migration is included.
+OpenRouter has partial live verification; the remaining acceptance checks are recorded in the [implementation status](docs/IMPLEMENTATION_STATUS.md). The HTTPS child enforces a tested macOS file boundary; other operating systems fail closed for live execution. Subscription CLI and native specialist adapters remain future work, with unsupported configurations visible in the roster. No public deployment or source-project migration is included.
 
 The core accepts categorical fields. Multi-label sets, numerical scores, rankings, multimodal inputs and free-text rationale scoring need separate contracts; they are not silently treated as categorical tasks.
 

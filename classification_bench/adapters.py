@@ -73,10 +73,34 @@ def _microusd(value):
 
 def _catalog_url(model):
     if (not isinstance(model, str) or model.count("/") != 1 or ":" in model or
-            model.startswith("~") or model.startswith("openrouter/") or
+            any(not part for part in model.split("/")) or model.startswith("~") or
+            model.startswith("openrouter/") or
             any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-_." for c in model.replace("/", ""))):
         raise AdapterError("model must be an exact OpenRouter slug")
     return f"https://openrouter.ai/api/v1/models/{model}/endpoints"
+
+
+def _model_url(model):
+    _catalog_url(model)
+    return f"https://openrouter.ai/api/v1/model/{model}"
+
+
+def _model_identity(raw, requested_id, source_url, observed_at):
+    if not isinstance(raw, bytes) or len(raw) > MAX_CATALOG_BYTES:
+        raise AdapterError("model identity response must be bounded bytes")
+    try:
+        response_json = raw.decode("utf-8")
+        data = json.loads(response_json)["data"]
+    except (UnicodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise AdapterError("invalid model identity response") from exc
+    if not isinstance(data, dict) or data.get("id") != requested_id:
+        raise AdapterError("model identity requested ID mismatch")
+    canonical = data.get("canonical_slug")
+    _model_url(canonical)
+    return {"requested_id": requested_id, "canonical_id": canonical,
+            "source_url": source_url, "observed_at": observed_at,
+            "response_sha256": hashlib.sha256(raw).hexdigest(),
+            "response_json": response_json}
 
 
 def _provider_slug(value):
@@ -124,11 +148,13 @@ def _snapshot_from_endpoint(model, provider, url, endpoint, observed_at):
             "supported_parameters": supported, "pricing": pricing}
 
 
-def fetch_endpoint_snapshot(model, provider, *, catalog_fetch=None, now=None):
-    """Capture one public catalog endpoint without a credential or inference call."""
+def fetch_endpoint_snapshot(model, provider, *, catalog_fetch=None, model_fetch=None, now=None):
+    """Capture endpoint and alias identity from public catalog APIs."""
     url = _catalog_url(model)
+    identity_url = _model_url(model)
     _provider_slug(provider)
     fetch = catalog_fetch or _default_catalog_fetch
+    fetch_model = model_fetch or _default_catalog_fetch
     clock = now or (lambda: datetime.now(timezone.utc))
     try:
         value = json.loads(fetch(url))
@@ -137,7 +163,10 @@ def fetch_endpoint_snapshot(model, provider, *, catalog_fetch=None, now=None):
             raise AdapterError("catalog model mismatch")
         endpoint = _unique_endpoint(data, provider)
         observed_at = clock().astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-        return _snapshot_from_endpoint(model, provider, url, endpoint, observed_at)
+        snapshot = _snapshot_from_endpoint(model, provider, url, endpoint, observed_at)
+        snapshot["model_identity"] = _model_identity(fetch_model(identity_url), model,
+                                                      identity_url, observed_at)
+        return snapshot
     except (OSError, TimeoutError, UnicodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
         raise AdapterError("catalog could not be captured") from exc
 
@@ -244,7 +273,8 @@ def _default_generation_fetch(url, headers, timeout, limit):
 class OpenRouterAdapter:
     """One pinned OpenRouter chat route, with explicit controls and price bound."""
 
-    def __init__(self, config, *, transport=None, catalog_fetch=None, generation_fetch=None, now=None):
+    def __init__(self, config, *, transport=None, catalog_fetch=None, model_fetch=None,
+                 generation_fetch=None, now=None):
         if not isinstance(config, dict) or not {"id", "model"} <= set(config) or set(config) - {"id", "model", "settings"}:
             raise AdapterError("invalid experiment configuration")
         self.config = config
@@ -270,12 +300,14 @@ class OpenRouterAdapter:
                 self.controls[name] = value
         self.transport = transport or _default_transport
         self.catalog_fetch = catalog_fetch or _default_catalog_fetch
+        self.model_fetch = model_fetch or _default_catalog_fetch
         self.generation_fetch = generation_fetch or _default_generation_fetch
         self.now = now or (lambda: datetime.now(timezone.utc))
 
     def _validate_snapshot(self, snapshot):
         required = {"model_id", "provider_tag", "observed_at", "source_url", "max_prompt_tokens", "max_completion_tokens", "supported_parameters", "pricing"}
-        if not isinstance(snapshot, dict) or set(snapshot) != required:
+        if not isinstance(snapshot, dict) or not (set(snapshot) == required or
+                set(snapshot) == required | {"model_identity"}):
             raise AdapterError("endpoint snapshot has missing or unknown fields")
         if snapshot["model_id"] != self.model or snapshot["provider_tag"] != self.provider:
             raise AdapterError("endpoint model/provider mismatch")
@@ -283,6 +315,30 @@ class OpenRouterAdapter:
         if snapshot["source_url"] != expected_url:
             raise AdapterError("endpoint source URL mismatch")
         _date(snapshot["observed_at"])
+        if "model_identity" in snapshot:
+            identity = snapshot["model_identity"]
+            identity_keys = {"requested_id", "canonical_id", "source_url", "observed_at",
+                             "response_sha256", "response_json"}
+            if not isinstance(identity, dict) or set(identity) != identity_keys:
+                raise AdapterError("model identity binding has missing or unknown fields")
+            if identity["requested_id"] != self.model or identity["source_url"] != _model_url(self.model):
+                raise AdapterError("model identity binding requested ID or source mismatch")
+            _model_url(identity["canonical_id"])
+            _date(identity["observed_at"])
+            sha = identity["response_sha256"]
+            if not isinstance(sha, str) or len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
+                raise AdapterError("invalid model identity response hash")
+            if not isinstance(identity["response_json"], str):
+                raise AdapterError("model identity raw response must be UTF-8 text")
+            try:
+                raw_identity = identity["response_json"].encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise AdapterError("model identity raw response is not UTF-8") from exc
+            original = _model_identity(raw_identity, self.model,
+                                       identity["source_url"], identity["observed_at"])
+            if (original["canonical_id"] != identity["canonical_id"] or
+                    original["response_sha256"] != sha):
+                raise AdapterError("model identity raw response disagrees with frozen binding")
         _positive(snapshot["max_prompt_tokens"], "max_prompt_tokens")
         _positive(snapshot["max_completion_tokens"], "max_completion_tokens")
         if self.max_output_tokens > snapshot["max_completion_tokens"]:
@@ -365,8 +421,18 @@ class OpenRouterAdapter:
             for name in ("max_prompt_tokens", "max_completion_tokens", "supported_parameters", "pricing"):
                 if endpoint[name] != self.snapshot[name]:
                     raise AdapterError(f"endpoint {name} drifted")
-            return {"catalog_sha256": hashlib.sha256(raw).hexdigest(),
-                    "checked_at": self.now().isoformat(), "source_url": self.snapshot["source_url"]}
+            result = {"catalog_sha256": hashlib.sha256(raw).hexdigest(),
+                      "checked_at": self.now().isoformat(), "source_url": self.snapshot["source_url"]}
+            if "model_identity" in self.snapshot:
+                frozen = self.snapshot["model_identity"]
+                identity_raw = self.model_fetch(frozen["source_url"])
+                current = _model_identity(identity_raw, self.model, frozen["source_url"],
+                                          frozen["observed_at"])
+                if current["canonical_id"] != frozen["canonical_id"]:
+                    raise AdapterError("canonical model identity drifted")
+                result["identity_response_sha256"] = current["response_sha256"]
+                result["identity_source_url"] = frozen["source_url"]
+            return result
         except (OSError, TimeoutError, UnicodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
             raise AdapterError("catalog could not be verified") from exc
 
@@ -421,7 +487,12 @@ class OpenRouterAdapter:
             data = json.loads(result.raw_bytes)["data"]
         except (UnicodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
             raise AdapterError("invalid generation metadata") from exc
-        if not isinstance(data, dict) or data.get("id") != expected_response_id or data.get("model") != expected_model:
+        accepted_models = {self.model}
+        identity = self.snapshot.get("model_identity")
+        if identity is not None:
+            accepted_models.add(identity["canonical_id"])
+        if (not isinstance(data, dict) or data.get("id") != expected_response_id or
+                expected_model != self.model or data.get("model") not in accepted_models):
             raise AdapterError("generation identity mismatch")
         provider_name = data.get("provider_name")
         if not isinstance(provider_name, str) or not provider_name:
@@ -430,7 +501,8 @@ class OpenRouterAdapter:
         observed_cost = None
         if cost is not None:
             observed_cost = _microusd(_decimal(str(cost), "generation.total_cost"))
-        return {"provider_name": provider_name, "observed_cost_microusd": observed_cost,
+        return {"provider_name": provider_name, "returned_model": data["model"],
+                "observed_cost_microusd": observed_cost,
                 "generation_time_ms": data.get("generation_time"),
                 "request_id": data.get("request_id"), "is_byok": data.get("is_byok")}
 

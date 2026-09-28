@@ -948,6 +948,15 @@ def _verified_response(verified, request_id, state):
     return receipt, response_ref
 
 
+def _frozen_canonical_model(saved):
+    """Read catalog identity only from an enrolled, verified manifest."""
+    controls = saved["manifest"].get("resolved_controls") if saved else None
+    snapshot = controls.get("endpoint_snapshot") if isinstance(controls, dict) else None
+    identity = snapshot.get("model_identity") if isinstance(snapshot, dict) else None
+    canonical = identity.get("canonical_id") if isinstance(identity, dict) else None
+    return canonical if isinstance(canonical, str) and canonical else None
+
+
 def _export_operations_loaded(config, binding, materials):
     if not Path(config["database"]).exists():
         return []
@@ -978,6 +987,8 @@ def _export_operations_loaded(config, binding, materials):
                          material["adapter"], UnsupportedAdapter) else None,
                      "provider": material["adapter"].provider,
                      "provider_identity_status": None,
+                     "frozen_canonical_model": _frozen_canonical_model(saved),
+                     "generation_returned_model": None,
                      "cost_currency": config["currency"],
                      "model": material["config"]["model"],
                      "effort": material["config"].get("settings", {}).get("reasoning"),
@@ -1020,6 +1031,7 @@ def _export_operations_loaded(config, binding, materials):
                 operation["provider_identity_status"] = observation.get("provider_identity_status")
                 generation = observation.get("generation")
                 if generation:
+                    operation["generation_returned_model"] = generation.get("returned_model")
                     operation["returned_provider"] = generation.get("provider_name")
                     value = generation.get("generation_time_ms")
                     if type(value) is int and value >= 0:

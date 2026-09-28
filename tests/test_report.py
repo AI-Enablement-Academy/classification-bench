@@ -137,6 +137,21 @@ class ReportTests(unittest.TestCase):
         self.assertIn("unverified:AdapterError", html)
         self.assertIn("Requested routing is not proof", html)
 
+    def test_completion_frozen_canonical_and_generation_models_are_distinct(self):
+        operation = {"request_id": self.plan["requests"][0]["request_id"],
+                     "model": "requested/model", "returned_model": "requested/model",
+                     "frozen_canonical_model": "canonical/model",
+                     "generation_returned_model": "canonical/model"}
+        html = generate_report(self.task, self.plan, self.labels, self.predictions, [operation])
+        self.assertIn("Completion returned model", html)
+        self.assertIn("Frozen canonical model", html)
+        self.assertIn("Generation returned model", html)
+        self.assertIn("<td>requested/model</td><td>requested/model</td><td>canonical/model</td><td>canonical/model</td>", html)
+        legacy = generate_report(self.task, self.plan, self.labels, self.predictions,
+                                 [{"request_id": operation["request_id"], "model": "requested/model",
+                                   "returned_model": "requested/model"}])
+        self.assertIn("<td>requested/model</td><td>requested/model</td><td>unavailable</td><td>unavailable</td>", legacy)
+
     def test_mixed_batch_invalid_status_keeps_valid_item(self):
         from classification_bench.report import _observed_outcome
         good, bad = ('c', 'p', 1, 'a'), ('c', 'p', 1, 'b')
@@ -221,6 +236,9 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(view["estimated_cost_micro_usd"], 140)
         self.assertIn("cache savings excluded", view["_estimate_basis"])
         self.assertIn("actual serving endpoint price is unverified", view["_estimate_basis"])
+        canonical_fields = dict(operation, frozen_canonical_model="openai/gpt-4.1-nano-2025",
+                                generation_returned_model="openai/gpt-4.1-nano-2025")
+        self.assertEqual(_derived_telemetry(canonical_fields, config)["estimated_cost_micro_usd"], 140)
         wrong_model = dict(operation, returned_model="openai/other-model")
         view = _derived_telemetry(wrong_model, config)
         self.assertIsNone(view["estimated_cost_micro_usd"])

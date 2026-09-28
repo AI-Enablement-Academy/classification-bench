@@ -1,6 +1,7 @@
 """Offline matrix runner and recovery tests; no network or model credentials."""
 
 import json
+import hashlib
 import tempfile
 import unittest
 from dataclasses import replace
@@ -276,7 +277,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(BudgetLedger(self.config["database"]).balances(self.config["scope"])[
             "known_charges"], 1)
 
-    def configure_mock_live(self, *, cost=0.000021, generation_model=None):
+    def configure_mock_live(self, *, cost=0.000021, generation_model=None, canonical_model=None):
         model = "example/model-v1"
         provider = "test-provider"
         snapshot = {"model_id": model, "provider_tag": provider,
@@ -286,6 +287,14 @@ class BenchmarkTests(unittest.TestCase):
                     "supported_parameters": ["max_completion_tokens"],
                     "pricing": {"prompt": "0.000001", "completion": "0.000002",
                                 "request": "0", "image": "0"}}
+        if canonical_model is not None:
+            response_json = json.dumps({"data": {"id": model, "canonical_slug": canonical_model}})
+            snapshot["model_identity"] = {
+                "requested_id": model, "canonical_id": canonical_model,
+                "source_url": f"https://openrouter.ai/api/v1/model/{model}",
+                "observed_at": snapshot["observed_at"],
+                "response_sha256": hashlib.sha256(response_json.encode()).hexdigest(),
+                "response_json": response_json}
         self.experiment = {"configs": [{"id": "live", "model": model,
                                          "settings": {"adapter": "openrouter",
                                                       "provider": provider,
@@ -337,11 +346,36 @@ class BenchmarkTests(unittest.TestCase):
         operation = export_operations(self.config_path)[0]
         self.assertEqual(operation["provider_identity_status"], "observed")
         self.assertEqual(operation["returned_provider"], "Test Provider")
+        self.assertEqual(operation["returned_model"], "example/model-v1")
+        self.assertIsNone(operation["frozen_canonical_model"])
+        self.assertEqual(operation["generation_returned_model"], "example/model-v1")
         self.assertEqual(operation["provider_generation_seconds"], 0.04)
         self.assertEqual(operation["observed_cost_micro_usd"], 21)
         self.assertEqual(operation["input_tokens"], 5)
         self.assertEqual(export_predictions(self.config_path)["records"][0]["prediction"],
                          {"kind": "a"})
+
+    def test_canonical_model_is_exported_from_saved_manifest_separately(self):
+        canonical = "example/model-v1-2025"
+        completion, generation = self.configure_mock_live(canonical_model=canonical,
+                                                           generation_model=canonical)
+        result = self.run_mock_live(completion, generation)
+        self.assertEqual(result["status"], "completed")
+        operation = export_operations(self.config_path)[0]
+        self.assertEqual(operation["model"], "example/model-v1")
+        self.assertEqual(operation["returned_model"], "example/model-v1")
+        self.assertEqual(operation["frozen_canonical_model"], canonical)
+        self.assertEqual(operation["generation_returned_model"], canonical)
+        config, _, binding, materials, _ = _load(self.config_path)
+        from classification_bench.verified_execution import VerifiedExecution
+        from classification_bench.benchmark import _saved_refs, _bind
+        verified = VerifiedExecution(config["database"], config["artifacts"])
+        _bind(verified, binding)
+        saved = _saved_refs(verified, materials[0])
+        self.assertEqual(saved["manifest"]["resolved_controls"]["endpoint_snapshot"]
+                         ["model_identity"]["canonical_id"], canonical)
+        self.assertEqual(operation["adapter_source_sha256"],
+                         saved["manifest"]["adapter_source_sha256"])
 
     def test_definitive_generation_identity_mismatch_is_invalid(self):
         completion, generation = self.configure_mock_live(generation_model="wrong/model")
@@ -378,6 +412,7 @@ class BenchmarkTests(unittest.TestCase):
         operation = export_operations(self.config_path)[0]
         self.assertEqual(operation["parsed_status"], "valid")
         self.assertEqual(operation["provider_identity_status"], "unverified:TimeoutError")
+        self.assertIsNone(operation["generation_returned_model"])
         self.assertEqual(operation["observed_cost_micro_usd"], 21)
 
     def test_preview_shows_request_above_cap_and_run_pauses_without_dispatch(self):
