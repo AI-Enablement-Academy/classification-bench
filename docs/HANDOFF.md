@@ -2,9 +2,11 @@
 
 Current working increment: 2026-09-30 in `/Users/adamkovacs/Documents/codebuild/classification-bench`. The private repository is `AI-Enablement-Academy/classification-bench`. The generic runner and report are implemented. Native Liquid, Solar and Qwen categorical adapters and a comparator-first report are the current extension; see [native operation](NATIVE_DECISIONS.md) and [report redesign](REPORT_REDESIGN.md). [OpenAI Decisions](OPENAI_DECISIONS_STATUS.md) is pending a public contract.
 
-The original goal remains [NEXT_TASK_GOAL.md](NEXT_TASK_GOAL.md). The updated OpenRouter identity path has [three-request live evidence](LIVE_IDENTITY_SMOKE_RESULT.md). Direct visual/keyboard verification of the changed report and live acceptance for the new native providers remain pending. Earlier user readability acceptance applies to the earlier report. No new provider calls are authorized or scheduled. The active candidate-experience benchmark remains separate.
+The active release goal is [NEXT_TASK_GOAL.md](NEXT_TASK_GOAL.md). The updated OpenRouter identity path has [three-request live evidence](LIVE_IDENTITY_SMOKE_RESULT.md). Direct visual/keyboard verification of the changed report and live acceptance for the new native providers remain pending. Earlier user readability acceptance applies to the earlier report. No new provider calls are authorized or scheduled. The active candidate-experience benchmark remains separate.
 
 Use [implementation status](IMPLEMENTATION_STATUS.md) for final verification counts and limits, and [operator workflow](RUNNER.md) for commands.
+
+The [2026-09-30 independent recheck](OPERATOR_RECHECK_20260930.md) reproduced all three fictional workflows. The [release audit](RELEASE_ACCEPTANCE_AUDIT.md) records the remaining visual gate and the applicability limits of saved live evidence. Separate [native smoke proposals](NATIVE_SMOKE_PLAN.md) are prepared but not authorized.
 
 ## Ownership
 
@@ -27,7 +29,7 @@ The checkpoint had 78 passing offline tests, including real macOS isolation and 
 
 ## Continue here
 
-1. Read `AGENTS.md`, [README](../README.md), [benchmark lessons](BENCHMARK_LESSONS.md), and the [acceptance audit](ACCEPTANCE_AUDIT.md).
+1. Read `AGENTS.md`, [README](../README.md), [benchmark lessons](BENCHMARK_LESSONS.md), and the [release acceptance audit](RELEASE_ACCEPTANCE_AUDIT.md).
 2. Use [RUNNER.md](RUNNER.md), the [custom task walkthrough](CUSTOM_TASK_WALKTHROUGH.md), and [FORMATS.md](FORMATS.md) for generic task configuration and operation. The [adapter runtime contract](ADAPTER_RUNTIME.md) covers future providers without scheduler changes.
 3. Run `python3 -m unittest discover -s tests -v` before code changes. Use the latest result in [implementation status](IMPLEMENTATION_STATUS.md), including its host-specific isolation caveats.
 4. Follow [OPERATOR_CHECK.md](OPERATOR_CHECK.md) for independent reproduction and report inspection. Do not claim these checks passed without observations.

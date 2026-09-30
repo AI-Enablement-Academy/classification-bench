@@ -10,6 +10,8 @@ Liquid d1, Upstage Solar Decide and Alibaba Qwen decision-model-preview use nati
 
 Each request contains one input record. Each categorical output field becomes one typed choice question. The state preserves the record, each question uses the original prompt as its instructions, and the task's labels supply the option IDs and descriptions. Existing task files have no separate label-description field; these adapters do not invent definitions. Put the reviewed classification rubric in the prompt. Reference answers remain outside the inference capsule.
 
+The [proposed three-request acceptance scopes](NATIVE_SMOKE_PLAN.md) fix the fictional inputs, prompt and proposed cap for each provider. No native execution is authorized.
+
 These implementations have offline tests. They have not been verified with live provider calls. The previous OpenRouter smoke approval does not authorize these providers. Their native endpoints, credentials and evidence are separate from the OpenRouter chat route.
 
 ## Review billing before preparation

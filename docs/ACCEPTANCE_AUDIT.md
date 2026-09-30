@@ -1,4 +1,6 @@
-# Goal acceptance audit
+# Historical implementation acceptance audit
+
+This audit records the earlier implementation checkpoint. Use [the current release audit](RELEASE_ACCEPTANCE_AUDIT.md) for acceptance against the updated goal and native-provider work.
 
 This audit follows the full [implementation goal](NEXT_TASK_GOAL.md), including its live and operator gates. Passing offline tests does not complete the release. The active candidate-experience project remains separate and read-only.
 

@@ -1,6 +1,12 @@
 # Implementation status: 2026-09-30
 
-The first runner and report are implemented and offline verified. The newly authorized product smoke verified the current adapter with three valid responses and independently checked delayed identity metadata; see [live identity results](LIVE_IDENTITY_SMOKE_RESULT.md). The release is not complete: updated report visual/keyboard verification remains pending. The user confirmed report readability and supplied filtering/expansion evidence; independent subagent operator reproduction passed; see [operator results](OPERATOR_CHECK_RESULT.md). The repository is private; the active candidate-experience benchmark was not edited or rerun.
+The first runner and report are implemented and offline verified. The completed, separately authorized product smoke verified the OpenRouter adapter with three valid responses and independently checked delayed identity metadata; see [live identity results](LIVE_IDENTITY_SMOKE_RESULT.md). The release is not complete: updated report visual/keyboard verification remains pending. The user confirmed report readability and supplied filtering/expansion evidence; independent subagent operator reproduction passed; see [operator results](OPERATOR_CHECK_RESULT.md). The repository is private; the active candidate-experience benchmark was not edited or rerun.
+
+## Current release audit
+
+The [requirement-by-requirement audit](RELEASE_ACCEPTANCE_AUDIT.md) separates core release gates from native-provider acceptance. A fresh [independent operator recheck](OPERATOR_RECHECK_20260930.md) reproduced candidate, product and custom workflows at `2d7de1f`: 24/24/16 completed synthetic requests, all 36/36/24 planned positions retained, unchanged artifacts after completed restart/recovery, and six expected overwrite refusals. No provider calls were made. The latest rendered report remains unaccepted.
+
+Saved OpenRouter evidence passes current read-only export and response/metadata parsers: three settled attempts, three dispatch events and USD 0.000174 charged. Adapter and transport source hashes still match; the runtime module changed when native support was added. This establishes historical protocol evidence, not live dispatch of the entire current build. The [native smoke proposals](NATIVE_SMOKE_PLAN.md) require separate billing evidence and authorization.
 
 ## Native providers and report extension
 
