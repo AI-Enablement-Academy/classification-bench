@@ -11,3 +11,11 @@ Fresh reports are in `private-data/report-redesign-20260930/product/report-lates
 Visual appearance and live keyboard behavior remain unverified. The local-file browser policy for this task does not permit a rendering workaround. Review the generated HTML directly in an allowed local browser session before treating the visual design as accepted.
 
 Implementation: [report generator](../classification_bench/report.py), [report UI tests](../tests/test_report_ux.py).
+
+## Presentation reference
+
+The updated goal names [Recruitly's model benchmarks](https://recruitly.io/ai/model-benchmarks) as a presentation reference. Its public page content was checked on 2026-09-30: a searchable model table places quality, failures, cost and latency together, with methodology explained separately. This is a content-structure observation, not a rendered visual comparison.
+
+The current local report follows that comparison-first structure through prominent configuration/model names, search, numeric sorting and adjacent agreement, invalid-output, cost and duration information. Detailed evidence remains expandable below the overview. Its design and metrics remain specific to this generic categorical benchmark: full planned denominators and unavailable measurements stay explicit, and currencies remain separate. Recruitly's scores, confidence thresholds and operational fallback policy are not adopted as benchmark rules.
+
+Rendered polish relative to the reference remains pending the [visual and interaction checklist](REPORT_UX_CHECK.md). Source inspection alone cannot establish equivalent visual quality.

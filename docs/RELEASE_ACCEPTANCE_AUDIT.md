@@ -31,6 +31,12 @@ Evidence levels below distinguish implementation, offline verification, historic
 | Version reference corrections and retain history | [Reference format](FORMATS.md), [source hashes](../classification_bench/core.py), [no-overwrite tests](../tests/test_core.py) | Implemented contract and offline evidence: references are separate versions, evaluation binds their digest, and output paths do not overwrite old results. Human adjudication remains external. |
 | Tested exact-file commit/push and accurate delivery records | [Status](IMPLEMENTATION_STATUS.md), [handoff](HANDOFF.md), [current goal](NEXT_TASK_GOAL.md) | Implementation checkpoint was pushed and tested. The accompanying documentation delivery records exact-file staging, commit and local/remote hash verification; that delivery check is separate from the pending visual/provider gates. |
 
+## Updated goal mapping
+
+The revised goal preserves the acceptance boundary and explicitly names five core gates: independent operator reproduction (passed), offline failure/budget/recovery tests (passed at the unchanged implementation checkpoint), existing OpenRouter evidence applicability (passed within the digest limits above), latest rendered report acceptance (pending), and accurate documentation/private remote (verified with each delivery commit). Shared Ruflo retrieval and canonical decision/pattern save-back were verified during the acceptance pass.
+
+The added Recruitly presentation reference is mapped in [report redesign](REPORT_REDESIGN.md). This mapping establishes content structure and implementation intent; it does not close the visual gate. The existing [manual checklist](REPORT_UX_CHECK.md) and [native smoke proposals](NATIVE_SMOKE_PLAN.md) cover the newly explicit handoff deliverables without granting inference authorization.
+
 ## Saved smoke recheck
 
 With network connection calls forbidden, the current code verified run hash `bac714eccb69d027a942cca1cfbf85dc2df48f074bfb9994633118175621aeb1` and plan hash `bd0be80544880f755b48fbf03b2959cdea5ff9ec3bba6d55e3d2742fb298b70c`. It exported three distinct valid, settled attempts; independently reparsed each saved completion and delayed generation body; matched charges; and found exactly three `dispatch_started` events. All **31 saved archive-file SHA-256 values remained unchanged**. No inference or metadata request was made.
