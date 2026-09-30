@@ -9,6 +9,21 @@ from classification_bench.report import _derived_telemetry, generate_report
 
 
 class ReportTests(unittest.TestCase):
+    def test_native_usage_counts_take_precedence_without_inventing_missing_values(self):
+        config = {"settings": {"adapter": "liquid_decide"}}
+        operation = {"usage": {"input_tokens": 17, "output_tokens": 0},
+                     "input_tokens": None, "output_tokens": None}
+        original = copy.deepcopy(operation)
+        view = _derived_telemetry(operation, config)
+        self.assertEqual((view["input_tokens"], view["output_tokens"]), (17, 0))
+        self.assertEqual(operation, original)
+        for bad in (None, False, -1, "17"):
+            operation["usage"]["input_tokens"] = bad
+            operation["input_tokens"] = 999
+            view = _derived_telemetry(operation, config)
+            self.assertIsNone(view["input_tokens"])
+            self.assertIn("usage.input_tokens is malformed", view["_telemetry_note"])
+
     def setUp(self):
         self.task = {"name": "fictional", "input_keys": ["text"],
                      "fields": [{"name": "class", "labels": ["yes", "no"]}]}

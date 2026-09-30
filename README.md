@@ -2,7 +2,7 @@
 
 A reusable benchmark core for categorical classification tasks: define the task, compare prompts and model configurations, and measure both agreement and repeatability.
 
-**Current status: the generic matrix runner and private local report are implemented; 160 offline tests pass.** The [authorized product smoke](docs/LIVE_IDENTITY_SMOKE_RESULT.md) completed three valid requests for $0.000174 in rounded charges, with delayed model/provider metadata independently verified. Updated report visual checks remain pending. Define categorical tasks, compare configurations and prompts, choose repeats and batches, preview exact work, and execute under a shared budget. Both smoke and full runs support user-selected caps and budget exhaustion policies: pause for an explicit increase, or stop.
+**Current status: the generic matrix runner and private local report are implemented; 186 offline tests pass.** The [authorized product smoke](docs/LIVE_IDENTITY_SMOKE_RESULT.md) completed three valid requests for $0.000174 in rounded charges, with delayed model/provider metadata independently verified. Updated report visual checks remain pending. Define categorical tasks, compare configurations and prompts, choose repeats and batches, preview exact work, and execute under a shared budget. Both smoke and full runs support user-selected caps and budget exhaustion policies: pause for an explicit increase, or stop.
 
 Start with the [operator workflow](docs/RUNNER.md), [task and result formats](docs/FORMATS.md), and [implementation status and remaining verification gates](docs/IMPLEMENTATION_STATUS.md). Synthetic examples test the software, not model quality or nondeterminism.
 
@@ -78,7 +78,7 @@ Each command runs a full synthetic matrix and writes a private local HTML report
 
 The same runner accepts an [OpenRouter configuration](docs/OPENROUTER.md) after an explicit run-bound authorization. Caps are operator settings for both smoke and full runs. At exhaustion, `pause` preserves the queue for an audited cap increase; `stop` permanently stops new dispatches for that run. Neither releases unknown charges. The original `simulate` workflow remains available and uses its existing offline sandbox.
 
-OpenRouter has partial live verification; the remaining acceptance checks are recorded in the [implementation status](docs/IMPLEMENTATION_STATUS.md). The HTTPS child enforces a tested macOS file boundary; other operating systems fail closed for live execution. Subscription CLI and native specialist adapters remain future work, with unsupported configurations visible in the roster. No public deployment or source-project migration is included.
+OpenRouter has partial live verification; the remaining acceptance checks are recorded in the [implementation status](docs/IMPLEMENTATION_STATUS.md). The HTTPS child enforces a tested macOS file boundary; other operating systems fail closed for live execution. Native [Liquid, Solar and Qwen decision adapters](docs/NATIVE_DECISIONS.md) have offline coverage and require reviewed billing evidence before live admission. [OpenAI Decisions](docs/OPENAI_DECISIONS_STATUS.md) awaits a verified public API contract. Subscription CLI adapters remain future work, with unsupported configurations visible in the roster. No public deployment or source-project migration is included.
 
 The core accepts categorical fields. Multi-label sets, numerical scores, rankings, multimodal inputs and free-text rationale scoring need separate contracts; they are not silently treated as categorical tasks.
 

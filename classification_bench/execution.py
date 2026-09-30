@@ -83,9 +83,11 @@ class ExecutionLedger:
             self.coordinator._event(conn, row, "enqueued", details="atomic execution enrollment")
             return dict(row)
 
-    def claim(self, worker_id, lease_seconds):
+    def claim(self, worker_id, lease_seconds, *, request_id=None):
         """Claim only enrolled requests; expired, unstarted claims retain attempt identity."""
         _text(worker_id, "worker_id")
+        if request_id is not None:
+            _text(request_id, "request_id")
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, (int, float)) or not math.isfinite(lease_seconds) or lease_seconds <= 0 or lease_seconds > 86400:
             raise ExecutionError("lease_seconds must be positive and at most 86400")
         with self.coordinator._transaction() as conn:
@@ -93,7 +95,8 @@ class ExecutionLedger:
             row = conn.execute("""SELECT r.* FROM requests r JOIN execution_requests x
                 ON x.request_id=r.request_id WHERE x.state='enrolled' AND
                 (r.state='ready' OR (r.state='claimed' AND r.lease_until<=?))
-                ORDER BY r.seq LIMIT 1""", (now,)).fetchone()
+                AND (? IS NULL OR r.request_id=?)
+                ORDER BY r.seq LIMIT 1""", (now, request_id, request_id)).fetchone()
             if row is None:
                 return None
             token = str(uuid.uuid4())

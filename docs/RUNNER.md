@@ -114,3 +114,7 @@ python3 -m classification_bench run --config /path/to/approved/config.json
 ```
 
 Do not enable shell tracing while loading credentials. Never put a key in command arguments, run configuration, reports or commits. Loading `.env` does not grant spending authorization; the separate run-bound grant and selected budget still apply.
+
+## Native decision models
+
+Use [native decision operation](NATIVE_DECISIONS.md) for Liquid d1, Upstage Solar Decide and Alibaba Qwen decision-model-preview. Each route has its own credential variable and reviewed billing snapshot, while sharing the same preview, authorization, budget, recovery and report commands. These adapters are offline-tested; live provider acceptance remains pending. OpenAI Decisions remains [pending its public API contract](OPENAI_DECISIONS_STATUS.md).

@@ -179,3 +179,66 @@ class OpenRouterRuntime:
 
 
 registry.register("openrouter", OpenRouterRuntime())
+
+
+class DecisionRuntime:
+    """Native typed-choice call with provider-specific credential and billing gate."""
+
+    offline = False
+
+    def __init__(self, kind):
+        from .decision_adapters import CONTRACTS
+        self.kind = kind
+        self.contract = CONTRACTS[kind]
+
+    def create_adapter(self, config):
+        from .decision_adapters import DecisionAdapter
+        if config.get("settings", {}).get("adapter") != self.kind:
+            raise AdapterError("native adapter kind mismatch")
+        return DecisionAdapter(config)
+
+    def credential(self, supplied):
+        if supplied is not None:
+            raise ValueError("native decision credentials must come from their provider-specific environment variable")
+        name = self.contract["credential"]
+        value = os.environ.get(name)
+        if not value:
+            raise ValueError(f"{name} is required before live admission")
+        return value
+
+    def source_digests(self, adapter):
+        from . import adapters, decision_adapters, decision_network, isolation, network_isolation
+        def composite(*modules):
+            return digest(b"".join(len(raw).to_bytes(8, "big") + raw for raw in
+                           (Path(module.__file__).read_bytes() for module in modules)))
+        return {"adapter_source_sha256": composite(adapters, decision_adapters),
+                "runtime_source_sha256": _module_digest(self),
+                "transport_source_sha256": composite(isolation, network_isolation,
+                                                     decision_network)}
+
+    def preflight(self, adapter, prepared, worker):
+        from .decision_network import DecisionNetworkWorker
+        (worker or DecisionNetworkWorker()).probe_endpoint(adapter.endpoint)
+        attestation = adapter.verify_live_snapshot()
+        return f"{prepared.bound_source}:source:{attestation['billing_response_sha256']}"
+
+    def dispatch(self, adapter, prepared, api_key, worker):
+        from .decision_network import isolated_decision_dispatch
+        return isolated_decision_dispatch(adapter, prepared, api_key, worker=worker)
+
+    def parse(self, adapter, result, *, expected_request_id, expected_ids, expected_model):
+        return adapter.parse(result, expected_request_id=expected_request_id,
+                             expected_ids=expected_ids, expected_model=expected_model)
+
+    def supplement(self, adapter, parsed, api_key, worker, artifact_root, config):
+        return Supplement(parsed, "model-echoed;provider-unverified")
+
+    def recovery_identity_status(self):
+        return "unverified:recovery"
+
+    def zero_charge_evidence(self, observation):
+        return None
+
+
+for _decision_kind in ("liquid_decide", "solar_decide", "qwen_decision"):
+    registry.register(_decision_kind, DecisionRuntime(_decision_kind))

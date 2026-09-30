@@ -734,7 +734,8 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
                 if state not in ("ready", "claimed"):
                     pending[config_id] = None
                     continue
-                claim = verified.execution.claim("benchmark-matrix", 300)
+                claim = verified.execution.claim("benchmark-matrix", 300,
+                                                 request_id=material["request"]["request_id"])
                 if claim is None:
                     continue
                 selected = next((x for x in materials if x["request"]["request_id"] == claim["request_id"]), None)
@@ -1045,11 +1046,11 @@ def _export_operations_loaded(config, binding, materials):
                     read_artifact(config["artifacts"], ref)
                     operation["generation_response_sha256"] = generation_sha
                 usage = parsed["usage"] or {}
-                for target, source in (("input_tokens", "prompt_tokens"),
-                                       ("output_tokens", "completion_tokens"),
-                                       ("reasoning_tokens", "reasoning_tokens"),
-                                       ("cache_tokens", "cached_tokens")):
-                    value = usage.get(source)
+                for target, sources in (("input_tokens", ("prompt_tokens", "input_tokens")),
+                                        ("output_tokens", ("completion_tokens", "output_tokens")),
+                                        ("reasoning_tokens", ("reasoning_tokens",)),
+                                        ("cache_tokens", ("cached_tokens",))):
+                    value = next((usage[key] for key in sources if key in usage), None)
                     if type(value) is int and value >= 0:
                         operation[target] = value
             else:

@@ -71,6 +71,14 @@ def table_rows(table):
     return rows
 
 
+def comparison_rows(table):
+    headers = table_rows(table)[0]
+    return headers, {(row.attrs["data-config-id"], row.attrs["data-prompt-id"]):
+                     dict(zip(headers, [normalized(cell) for cell in row.children
+                                        if isinstance(cell, Element) and cell.tag in ("th", "td")]))
+                     for row in table.descendants("tr") if "data-config-id" in row.attrs}
+
+
 class ReportUxTests(unittest.TestCase):
     def setUp(self):
         self.task = {"name": "fictional", "input_keys": ["text"],
@@ -123,6 +131,21 @@ class ReportUxTests(unittest.TestCase):
         return Tree(generate_report(self.task, self.plan, self.labels,
                                     self.predictions, self.operations)).root
 
+    def test_comparison_uses_native_requested_provider_from_operations(self):
+        self.experiment["configs"][0]["settings"].pop("provider")
+        old_requests = self.plan["requests"]
+        self.plan = build_plan(self.task, self.experiment, self.inputs)
+        ids = {old["request_id"]: new["request_id"]
+               for old, new in zip(old_requests, self.plan["requests"])}
+        for operation in self.operations:
+            operation["request_id"] = ids[operation["request_id"]]
+            operation["provider"] = "liquid"
+            operation["returned_provider"] = None
+        page = self.render()
+        table = next(table for table in page.descendants("table")
+                     if table.attrs.get("class") == "comparison-table")
+        self.assertIn("requested provider: liquid", normalized(table))
+
     def test_comparison_uses_full_denominator_and_keeps_missing_invalid_separate(self):
         page = self.render()
         tables = [table for table in page.descendants("table")
@@ -130,12 +153,11 @@ class ReportUxTests(unittest.TestCase):
         self.assertEqual(len(tables), 1)
         self.assertEqual(normalized(next(tables[0].descendants("caption"))),
                          "Configuration and prompt comparison (unfiltered)")
-        header, *body = table_rows(tables[0])
+        header, rows = comparison_rows(tables[0])
         self.assertEqual(header[:6], ["Configuration", "Prompt", "Exact agreement",
                                       "Repeat range", "Invalid selected projections",
                                       "No selected prediction"])
-        self.assertEqual(len(body), 4)
-        rows = {(row[0], row[1]): dict(zip(header, row)) for row in body}
+        self.assertEqual(len(rows), 4)
         self.assertEqual(set(rows), {("alpha", "plain"), ("alpha", "careful"),
                                      ("beta", "plain"), ("beta", "careful")})
         for key, expected in {
@@ -155,8 +177,7 @@ class ReportUxTests(unittest.TestCase):
         page = self.render()
         table = next(table for table in page.descendants("table")
                      if "comparison-table" in table.attrs.get("class", "").split())
-        header, *body = table_rows(table)
-        rows = {(row[0], row[1]): dict(zip(header, row)) for row in body}
+        header, rows = comparison_rows(table)
         plain = rows[("alpha", "plain")]
         self.assertIn("2.000 s", plain["Mean client request duration"])
         self.assertIn("1/2", plain["Mean client request duration"])
@@ -198,8 +219,8 @@ class ReportUxTests(unittest.TestCase):
         page = self.render()
         comparison = next(table for table in page.descendants("table")
                           if "comparison-table" in table.attrs.get("class", "").split())
-        header, *body = table_rows(comparison)
-        row = next(dict(zip(header, cells)) for cells in body if cells[:2] == ["alpha", "plain"])
+        header, rows = comparison_rows(comparison)
+        row = rows[("alpha", "plain")]
         self.assertIn("5 micro USD", row["Observed cost"])
         self.assertIn("7 SYN units", row["Observed cost"])
         self.assertIn("2/2", row["Cost coverage"])
@@ -305,6 +326,55 @@ class ReportUxTests(unittest.TestCase):
         self.assertEqual(len(empty), 1)
         self.assertIn("hidden", empty[0].attrs)
         self.assertIn("No pass sections match", normalized(empty[0]))
+
+    def test_comparison_leads_and_uses_explicit_sort_values(self):
+        page = self.render()
+        main = next(page.descendants("main"))
+        first_section = next(child for child in main.children if isinstance(child, Element))
+        self.assertEqual(first_section.attrs.get("class"), "comparison-section")
+        table = next(table for table in first_section.descendants("table")
+                     if table.attrs.get("class") == "comparison-table")
+        rows = {(row.attrs["data-config-id"], row.attrs["data-prompt-id"]): row
+                for row in table.descendants("tr") if "data-config-id" in row.attrs}
+        self.assertEqual(set(rows), {("alpha", "plain"), ("alpha", "careful"),
+                                     ("beta", "plain"), ("beta", "careful")})
+        plain = rows[("alpha", "plain")]
+        cells = [cell for cell in plain.children if isinstance(cell, Element)]
+        self.assertIn("fixture-a", normalized(cells[0]))
+        self.assertIn("alpha · requested provider: local", normalized(cells[0]))
+        self.assertEqual(cells[2].attrs["data-sort-value"], "0.75")
+        self.assertEqual(cells[4].attrs["data-sort-value"], "0")
+        self.assertEqual(cells[6].attrs["data-sort-value"], "2.0")
+        beta_cells = [cell for cell in rows[("beta", "plain")].children if isinstance(cell, Element)]
+        self.assertEqual(beta_cells[6].attrs["data-sort-value"], "")
+        self.assertIn("selected prediction gap(s)", normalized(rows[("alpha", "careful")]))
+        self.assertTrue(any("has-gaps" in span.attrs.get("class", "").split()
+                            for span in rows[("alpha", "careful")].descendants("span")))
+        sort_keys = {button.attrs["data-sort"] for button in table.descendants("button")
+                     if "data-sort" in button.attrs}
+        self.assertIn("exact", sort_keys)
+        self.assertNotIn("cost", sort_keys)
+        self.assertEqual(len([node for node in page.descendants("input")
+                              if node.attrs.get("id") == "comparison-search"]), 1)
+
+    def test_saved_raw_usage_is_collapsed_and_escaped_per_request(self):
+        self.operations[0]["usage"] = {
+            "choice_probabilities": [{"id": "a", "yes": 0.73}],
+            "note": "<script>alert(1)</script>",
+        }
+        html = generate_report(self.task, self.plan, self.labels,
+                               self.predictions, self.operations)
+        page = Tree(html).root
+        disclosures = [node for node in page.descendants("details")
+                       if "raw-usage" in node.attrs.get("class", "").split()]
+        self.assertEqual(len(disclosures), len(self.operations))
+        self.assertFalse(any("open" in node.attrs for node in disclosures))
+        first = next(node for node in disclosures
+                     if self.operations[0]["request_id"] in normalized(node))
+        self.assertIn('"yes": 0.73', normalized(first))
+        self.assertIn("<script>alert(1)</script>", normalized(first))
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertTrue(any("unavailable" in normalized(node) for node in disclosures))
 
 
 if __name__ == "__main__":

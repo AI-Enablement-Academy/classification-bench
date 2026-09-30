@@ -44,6 +44,15 @@ class ExecutionTests(unittest.TestCase):
         return self.ledger.admit(claim["request_id"], claim["token"], MANIFEST, INPUT,
                                  "shared", amount, bound_source="price ceiling")
 
+    def test_targeted_claim_preserves_eligibility_and_default_order(self):
+        for request_id in ('one', 'two'):
+            self.ledger.enqueue(request_id, MANIFEST, INPUT, 'shared')
+        second = self.ledger.claim('targeted-worker', 30, request_id='two')
+        self.assertEqual(second['request_id'], 'two')
+        self.assertIsNone(self.ledger.claim('other-worker', 30, request_id='two'))
+        self.assertIsNone(self.ledger.claim('other-worker', 30, request_id='absent'))
+        self.assertEqual(self.ledger.claim('default-worker', 30)['request_id'], 'one')
+
     def test_atomic_shared_cap_race(self):
         self.ledger.enqueue("one", MANIFEST, INPUT, "shared")
         self.ledger.enqueue("two", MANIFEST, INPUT, "shared")

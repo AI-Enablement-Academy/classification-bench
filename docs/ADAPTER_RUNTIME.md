@@ -16,7 +16,7 @@ The matrix scheduler calls trusted runtime implementations registered by `settin
 
 The scheduler retains ownership of ordering, shared reservations, dispatch intent, raw primary-response publication, task vocabulary validation, immutable observation records, terminal settlement and recovery. It does not select an OpenRouter endpoint, read an OpenRouter-specific environment variable, or issue a generation-metadata request itself. Those choices belong to `OpenRouterRuntime`.
 
-The [runtime tests](../tests/test_adapter_runtime.py) register another request/response protocol and exercise the same scheduler. They also exercise explicit USD admission with a no-network fake runtime that needs no OpenRouter credential. These tests establish the extension boundary, not working subscription CLI or native Choice/NLI adapters. Each future implementation still needs its own capability, authentication, isolation, usage and call-topology evidence before admission.
+The [runtime tests](../tests/test_adapter_runtime.py) register another request/response protocol and exercise the same scheduler. They also exercise explicit USD admission with a no-network fake runtime that needs no OpenRouter credential. These tests establish the extension boundary. The native Liquid, Solar and Qwen implementations use that boundary; see [native decision operation](NATIVE_DECISIONS.md) for their billing and verification limits. Subscription CLI and other specialist protocols still need their own implementations and evidence.
 
 ## Historical evidence and changed code
 

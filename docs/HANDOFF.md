@@ -1,8 +1,10 @@
 # Implementation handoff
 
-Current implementation checkpoint: `312a632`, verified on 2026-09-28 in `/Users/adamkovacs/Documents/codebuild/classification-bench`. The private repository is `AI-Enablement-Academy/classification-bench`. The generic matrix runner and local report are implemented, 154 offline tests pass, and the integrated adapter identity change passed independent review. See [implementation status](IMPLEMENTATION_STATUS.md) for verification limits and [operator workflow](RUNNER.md) for commands.
+Current working increment: 2026-09-30 in `/Users/adamkovacs/Documents/codebuild/classification-bench`. The private repository is `AI-Enablement-Academy/classification-bench`. The generic runner and report are implemented. Native Liquid, Solar and Qwen categorical adapters and a comparator-first report are the current extension; see [native operation](NATIVE_DECISIONS.md) and [report redesign](REPORT_REDESIGN.md). [OpenAI Decisions](OPENAI_DECISIONS_STATUS.md) is pending a public contract.
 
-The goal remains [NEXT_TASK_GOAL.md](NEXT_TASK_GOAL.md). The remaining release gate is live validation of the updated identity path. Report readability is user-confirmed, with supplied filtering and case-expansion evidence. Independent subagent reproduction passed; see [operator results](OPERATOR_CHECK_RESULT.md). No additional model calls are scheduled or proposed. The user directed work toward the generic product; the active candidate-experience benchmark remains separate.
+The original goal remains [NEXT_TASK_GOAL.md](NEXT_TASK_GOAL.md). The updated OpenRouter identity path has [three-request live evidence](LIVE_IDENTITY_SMOKE_RESULT.md). Direct visual/keyboard verification of the changed report and live acceptance for the new native providers remain pending. Earlier user readability acceptance applies to the earlier report. No new provider calls are authorized or scheduled. The active candidate-experience benchmark remains separate.
+
+Use [implementation status](IMPLEMENTATION_STATUS.md) for final verification counts and limits, and [operator workflow](RUNNER.md) for commands.
 
 ## Ownership
 
@@ -27,7 +29,7 @@ The checkpoint had 78 passing offline tests, including real macOS isolation and 
 
 1. Read `AGENTS.md`, [README](../README.md), [benchmark lessons](BENCHMARK_LESSONS.md), and the [acceptance audit](ACCEPTANCE_AUDIT.md).
 2. Use [RUNNER.md](RUNNER.md), the [custom task walkthrough](CUSTOM_TASK_WALKTHROUGH.md), and [FORMATS.md](FORMATS.md) for generic task configuration and operation. The [adapter runtime contract](ADAPTER_RUNTIME.md) covers future providers without scheduler changes.
-3. Run `python3 -m unittest discover -s tests -v` before code changes. The latest completed run passed 154 tests with no skips, including real macOS isolation and recovery checks.
+3. Run `python3 -m unittest discover -s tests -v` before code changes. Use the latest result in [implementation status](IMPLEMENTATION_STATUS.md), including its host-specific isolation caveats.
 4. Follow [OPERATOR_CHECK.md](OPERATOR_CHECK.md) for independent reproduction and report inspection. Do not claim these checks passed without observations.
 5. Preserve the inference authorization boundary. Existing completed attempts are evidence, not permission to dispatch again. Do not repeat the original implementation or expand the live experiment to fill a release gate.
 

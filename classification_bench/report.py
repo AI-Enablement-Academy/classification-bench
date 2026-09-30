@@ -42,6 +42,44 @@ def _table(headers, rows, *, caption=None, row_header=False, numeric_columns=(),
     return f"<table{table_class}>{label}<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
 
+def _comparison_table(rows):
+    """Keep display text and sort keys separate, especially for rates and gaps."""
+    columns = (
+        ("Configuration", "model", "text"), ("Prompt", "prompt", "text"),
+        ("Exact agreement", "exact", "number"), ("Repeat range", "range", "number"),
+        ("Invalid selected projections", "invalid", "number"),
+        ("No selected prediction", "missing", "number"),
+        ("Mean client request duration", "duration", "number"),
+        ("Observed cost", "cost", "static"), ("Cost coverage", "coverage", "number"),
+    )
+    head = "".join(
+        f"<th scope='col' aria-sort='none'><button type='button' class='sort-button' "
+        f"data-sort='{key}' data-sort-type='{kind}' aria-label='Sort by {_h(label)}'>{_h(label)}"
+        "<span class='sort-mark' aria-hidden='true'></span></button></th>"
+        if kind != "static" else f"<th scope='col'>{_h(label)}</th>"
+        for label, key, kind in columns)
+    body = []
+    for entry in rows:
+        values = entry["display"]
+        keys = entry["sort"]
+        cells = []
+        for index, ((_, key, _), value) in enumerate(zip(columns, values)):
+            attrs = f" data-sort-value='{_h(keys[key])}'"
+            if index == 0:
+                content = (f"<strong class='model-name'>{_h(entry['model'])}</strong>"
+                           f"<span class='model-meta'>{_h(value)} · requested provider: {_h(entry['provider'])}</span>"
+                           f"<span class='quality-note{' has-gaps' if entry['has_gaps'] else ''}'>{_h(entry['status'])}</span>")
+                cells.append(f"<th scope='row'{attrs}>{content}</th>")
+            else:
+                cls = " class='numeric'" if index in (2, 3, 4, 5, 6, 8) else ""
+                cells.append(f"<td{cls}{attrs}>{_h(value)}</td>")
+        body.append(f"<tr data-config-id='{_h(entry['config'])}' data-prompt-id='{_h(entry['prompt'])}'>"
+                    + "".join(cells) + "</tr>")
+    return ("<div class='table-scroll' tabindex='0' role='region' aria-label='Configuration comparison table'>"
+            "<table class='comparison-table'><caption>Configuration and prompt comparison (unfiltered)</caption>"
+            f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>")
+
+
 _MEASUREMENTS = ("duration_seconds", "provider_generation_seconds", "pure_inference_seconds",
                  "observed_cost_micro_usd", "estimated_cost_micro_usd", "unresolved_hold_micro_usd")
 
@@ -102,6 +140,8 @@ def _derived_telemetry(operation, config):
         ("reasoning_tokens", "reasoning_tokens", "completion_tokens_details", "reasoning_tokens"),
         ("cache_tokens", "cached_tokens", "prompt_tokens_details", "cached_tokens"),
     ):
+        if parent is None and flat != target and flat not in usage and target in usage:
+            flat = target
         value, note = _usage_count(operation, usage, flat, parent, nested)
         if value is None and target in operation and flat != target and flat not in usage and parent is None:
             value = _count(operation[target])
@@ -254,6 +294,16 @@ def _cost_visual(condition, costs, chart_id, currency):
                 body, chart_id, 44 + len(condition["passes"]) * 42)
 
 
+def _raw_usage_disclosures(records):
+    parts = []
+    for record in records:
+        usage = record.get("usage")
+        payload = json.dumps(usage, ensure_ascii=False, sort_keys=True, indent=2) if usage is not None else "unavailable"
+        parts.append(f"<details class='raw-usage'><summary>Saved raw usage for request {_h(record['request_id'])}</summary>"
+                     f"<pre>{_h(payload)}</pre></details>")
+    return "".join(parts)
+
+
 def _operation_summary(records, planned_count, currency):
     if not records:
         return f"<p>No request evidence supplied for {planned_count} planned request(s); timing, token and cost measures are unavailable.</p>"
@@ -341,7 +391,8 @@ def _operation_summary(records, planned_count, currency):
              f"Observed charge ({'per request currency' if mixed_charges else charge_currency})",
              f"Price estimate ({'micro USD' if any(r.get('estimated_cost_micro_usd') is not None for r in records) else currency})", "Estimate basis or limit",
              "Endpoint snapshot SHA-256", "Telemetry note"), telemetry_rows,
-            caption="Request token and cost telemetry", numeric_columns=(1, 2, 3, 4, 5, 6)) + "</details>")
+            caption="Request token and cost telemetry", numeric_columns=(1, 2, 3, 4, 5, 6))
+        + _raw_usage_disclosures(records) + "</details>")
 
 
 def _observed_outcome(key, invalid, supplied, operation):
@@ -373,6 +424,21 @@ def _cost_currency(operation, fallback):
     if operation.get("cost_currency") == "USD":
         return "micro USD"
     return fallback
+
+
+_REPORT_CSS = """
+:root{color-scheme:light;--paper:#f8f7f4;--surface:#fff;--ink:#222823;--muted:#59635d;--line:#dcded8;--accent:#245b4b;--soft:#e9efe9;--danger:#a3362c}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-variant-numeric:tabular-nums}
+.shell{width:min(100% - 3rem,1360px);margin-inline:auto}h1,h2,h3,h4{line-height:1.15;letter-spacing:-.035em;text-wrap:balance}h1{font-size:clamp(2.7rem,6vw,5.5rem);max-width:13ch;margin:.75rem 0 1rem;font-weight:750}h2{font-size:clamp(1.7rem,3vw,2.5rem);margin:0 0 .75rem}h3{font-size:1.35rem;margin:0 0 .7rem}h4{font-size:1.08rem;margin:2rem 0 .6rem}p{max-width:72ch;margin:.65rem 0 1rem}a{color:var(--accent);text-underline-offset:.18em}
+.masthead{border-bottom:1px solid var(--line);padding:2.2rem 0 2.7rem}.eyebrow{color:var(--accent);font-weight:700;font-size:.76rem;letter-spacing:.13em;text-transform:uppercase}.lead{font-size:1.12rem;color:var(--muted)}.overview-meta{display:flex;flex-wrap:wrap;gap:1rem 2rem;padding:1.15rem 0;margin-top:2rem;border-top:1px solid var(--line)}.overview-meta span{display:block}.meta-label{font-size:.73rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.meta-value{font-size:1.1rem;font-weight:650}
+.jump-nav{display:flex;flex-wrap:wrap;gap:1.4rem;margin-top:1.5rem;font-size:.85rem;font-weight:650}.jump-nav a{text-decoration:none;border-bottom:2px solid transparent;padding-bottom:.2rem}.jump-nav a:hover,.jump-nav a:focus-visible{border-color:var(--accent)}
+main{padding-bottom:5rem}.comparison-section{padding:3.5rem 0 3rem}.section-intro{display:flex;justify-content:space-between;align-items:end;gap:2rem;flex-wrap:wrap}.section-intro p{color:var(--muted)}.comparison-tools{display:flex;gap:.7rem;align-items:end;flex-wrap:wrap;margin:1.5rem 0 .5rem}.comparison-tools label{font-size:.8rem;font-weight:650}.comparison-tools input{display:block;margin-top:.35rem;width:min(23rem,80vw);padding:.6rem .75rem;border:1px solid #aeb9af;border-radius:3px;background:var(--surface);color:var(--ink);font:inherit}.comparison-tools small{color:var(--muted)}
+.table-scroll{overflow-x:auto;max-width:100%;background:var(--surface);border-top:2px solid var(--ink);border-bottom:1px solid var(--line)}table{border-collapse:collapse;width:100%;font-size:.88rem}caption{text-align:left;font-weight:650;padding:.8rem 0;color:var(--muted)}.comparison-table{min-width:1080px}.comparison-table caption{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}.comparison-table th,.comparison-table td{padding:1rem .8rem;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}.comparison-table thead th{font-size:.73rem;letter-spacing:.02em;color:var(--muted);font-weight:600;background:#f1f2ed}.comparison-table tbody tr:hover{background:#f7f9f5}.comparison-table tbody tr:last-child th,.comparison-table tbody tr:last-child td{border-bottom:0}.comparison-table .numeric{text-align:right;white-space:nowrap}.model-name,.model-meta,.quality-note{display:block}.model-name{font-size:.97rem;line-height:1.3;color:var(--ink);font-weight:700}.model-meta{font-size:.76rem;color:var(--muted);margin-top:.23rem;font-weight:500}.quality-note{font-size:.72rem;color:var(--muted);margin-top:.5rem}.quality-note.has-gaps{color:var(--danger)}.sort-button{border:0;background:transparent;padding:0;color:inherit;font:inherit;font-weight:inherit;text-align:inherit;cursor:pointer}.sort-button:hover{color:var(--accent)}.sort-mark{margin-left:.3rem;color:var(--accent)}.sort-mark::after{content:' ↕'}.comparison-table [aria-sort=descending] .sort-mark::after{content:' ↓'}.comparison-table [aria-sort=ascending] .sort-mark::after{content:' ↑'}
+.summary-section,.detail-index,.condition,.provenance{border-top:1px solid var(--line);padding:2.4rem 0}.summary-section{display:grid;grid-template-columns:minmax(15rem,.7fr) minmax(0,1.3fr);gap:2rem}.summary-section>div>p{color:var(--muted)}.summary-data{min-width:0}.summary-data table,.condition table,.pass table,.provenance table{display:block;overflow-x:auto;max-width:100%}.summary-data th,.summary-data td,.condition th,.condition td,.pass th,.pass td,.provenance th,.provenance td{padding:.55rem .7rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:pre-wrap;overflow-wrap:anywhere}.numeric,.outcome-table td:nth-child(n+2){text-align:right;font-variant-numeric:tabular-nums}.condition{scroll-margin-top:1rem}.condition-header{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;flex-wrap:wrap}.condition p,.pass p{color:var(--muted)}.condition svg{max-width:100%;height:auto;margin:1rem 0}.pass{border-top:1px solid var(--line);padding:2rem 0;scroll-margin-top:1rem}.pass h3{color:var(--accent)}.detail-index ul{columns:2;list-style:none;padding:0}.detail-index li{break-inside:avoid;margin:.3rem 0}.contents-pass{margin-left:1rem;font-size:.85rem}.provenance{font-size:.88rem;color:var(--muted)}.provenance h2{color:var(--ink)}
+.filters{padding:1.5rem 0 2rem;border-top:1px solid var(--line)}.filter-grid{display:flex;flex-wrap:wrap;gap:.7rem 1rem;align-items:end}.filter-grid label{font-size:.76rem;font-weight:650;color:var(--muted)}.filter-grid select{display:block;margin-top:.25rem;min-width:7.5rem;max-width:14rem;padding:.45rem;border:1px solid #aeb9af;background:var(--surface);color:var(--ink);font:inherit;font-size:.86rem}.filter-grid button{padding:.46rem .8rem;border:1px solid var(--accent);background:transparent;color:var(--accent);font:inherit;cursor:pointer}.filter-grid button:hover{background:var(--soft)}.filter-grid button:active{transform:translateY(1px)}.filter-grid button,.sort-button,.jump-nav a{transition:background .2s,color .2s,border-color .2s}.status-line{font-size:.8rem;color:var(--muted)}
+details{margin-top:1rem}.raw-usage pre{max-height:24rem;overflow:auto;padding:1rem;background:#f1f2ed;border:1px solid var(--line);font-size:.78rem;white-space:pre-wrap;overflow-wrap:anywhere}summary{cursor:pointer;color:var(--accent);font-weight:650}.notice{border-left:3px solid var(--accent);padding-left:.75rem}.skip-link{position:absolute;left:-10000px}.skip-link:focus{left:1rem;top:1rem;z-index:2;background:var(--surface);padding:.5rem}.pass[hidden],article[hidden],[hidden]{display:none!important}a:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible,.table-scroll:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+@media(max-width:760px){.shell{width:min(100% - 2rem,1360px)}.masthead{padding-top:1.5rem}.summary-section{display:block}.detail-index ul{columns:1}.comparison-section{padding-top:2.5rem}.comparison-table{min-width:930px}}
+"""
 
 
 def generate_report(task, plan, labels, predictions, operations=None):
@@ -551,8 +617,23 @@ def generate_report(task, plan, labels, predictions, operations=None):
         observed = observed or "unavailable"
         coverage = (f"{sum(map(len, charge_groups.values()))}/{len(condition_requests)} planned requests"
                     if condition_requests else "0/0 planned requests")
-        comparison_rows.append((cid, pid, _rate(exact, denominator), f"{lo:.1%} to {hi:.1%}",
-                                invalid_count, missing_count, duration, observed, coverage))
+        comparison_rows.append({
+            "config": cid, "prompt": pid, "model": config["model"],
+            "provider": settings.get("provider") or ", ".join(sorted({
+                op["provider"] for op in condition_ops if op.get("provider")
+            })) or "provider unavailable",
+            "status": (f"{invalid_count + missing_count} selected prediction gap(s)"
+                       if invalid_count + missing_count else "Selected predictions complete"),
+            "has_gaps": invalid_count + missing_count > 0,
+            "display": (cid, pid, _rate(exact, denominator), f"{lo:.1%} to {hi:.1%}",
+                        invalid_count, missing_count, duration, observed, coverage),
+            "sort": {"model": config["model"], "prompt": pid,
+                     "exact": exact / denominator if denominator else "",
+                     "range": lo, "invalid": invalid_count, "missing": missing_count,
+                     "duration": sum(duration_values) / len(duration_values) if duration_values else "",
+                     "cost": observed, "coverage": sum(map(len, charge_groups.values())) / len(condition_requests)
+                     if condition_requests else ""},
+        })
         chart_id = f"chart-{len(pages)}"
         baseline_scores = {p["repeat"]: score_by_pass[(cid, baseline, p["repeat"])]
                            for p in condition["passes"]}
@@ -564,7 +645,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
             visuals += _cost_visual(condition, costs, chart_id + "-cost", chart_currency)
         else:
             visuals += "<p>Observed costs use more than one currency; see the separate per-currency totals above and in each pass.</p>"
-        pages.append(f"<article id='{condition_anchor}'><h2>{_h(cid)} · {_h(pid)}</h2>"
+        pages.append(f"<article class='condition' id='{condition_anchor}'><h2>{_h(cid)} · {_h(pid)}</h2>"
                      f"<p>Prompt: {_h(prompt['text'])}</p>"
                      f"<p>Exact agreement across passes: {lo:.1%} to {hi:.1%}. "
                      "Each pass uses the same input cases; passes are separate dispatches. "
@@ -613,57 +694,99 @@ def generate_report(task, plan, labels, predictions, operations=None):
         applyFilters();
       }
     }));
+    const comparisonBody = document.querySelector('.comparison-table tbody');
+    const comparisonRows = [...comparisonBody.rows];
+    const comparisonSearch = document.getElementById('comparison-search');
+    function applyComparisonSearch() {
+      const query = comparisonSearch.value.trim().toLocaleLowerCase();
+      let visible = 0;
+      comparisonRows.forEach(row => {
+        row.hidden = Boolean(query) && !row.textContent.toLocaleLowerCase().includes(query);
+        if (!row.hidden) visible += 1;
+      });
+      document.getElementById('comparison-status').textContent =
+        `Showing ${visible} of ${comparisonRows.length} configurations and prompts.`;
+      document.getElementById('comparison-empty').hidden = visible !== 0;
+    }
+    comparisonSearch.addEventListener('input', applyComparisonSearch);
+    document.querySelectorAll('[data-sort]').forEach(button => button.addEventListener('click', () => {
+      const index = button.closest('th').cellIndex;
+      const heading = button.closest('th');
+      const descending = heading.getAttribute('aria-sort') !== 'descending';
+      document.querySelectorAll('.comparison-table thead th').forEach(th => th.setAttribute('aria-sort', 'none'));
+      heading.setAttribute('aria-sort', descending ? 'descending' : 'ascending');
+      const numeric = button.dataset.sortType === 'number';
+      const ordered = comparisonRows.map((row, originalIndex) => ({row, originalIndex}));
+      ordered.sort((a, b) => {
+        const left = a.row.cells[index].dataset.sortValue;
+        const right = b.row.cells[index].dataset.sortValue;
+        if (left === '' || right === '') return left === right ? a.originalIndex - b.originalIndex : left === '' ? 1 : -1;
+        const result = numeric ? Number(left) - Number(right) : left.localeCompare(right, undefined, {sensitivity: 'base'});
+        return (descending ? -result : result) || a.originalIndex - b.originalIndex;
+      });
+      ordered.forEach(item => comparisonBody.appendChild(item.row));
+    }));
     applyFilters();"""
-    comparison = _table(
-        ("Configuration", "Prompt", "Exact agreement", "Repeat range", "Invalid selected projections",
-         "No selected prediction", "Mean client request duration", "Observed cost", "Cost coverage"),
-        comparison_rows, caption="Configuration and prompt comparison (unfiltered)",
-        row_header=True, numeric_columns=(2, 3, 4, 5, 6, 7, 8), class_name="comparison-table")
+    comparison = _comparison_table(comparison_rows)
     synthetic_notice = ("<p class='notice'>Contains synthetic results: SYN units are local accounting, not provider charges.</p>"
                         if any(config.get("settings", {}).get("adapter") == "synthetic" for config in configs.values())
                         or any(str(op.get("route", "")).startswith("synthetic:") for op in operations) else "")
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width, initial-scale=1'>"
             f"<title>{_h(task['name'])} · local classification report</title>"
-            "<style>body{font:16px/1.55 system-ui,sans-serif;max-width:1100px;margin:auto;padding:2rem;color:#18222c;background:#f7f8fa;font-variant-numeric:tabular-nums}"
-            "h1,h2,h3{line-height:1.2;letter-spacing:-.025em}p{max-width:70ch}article,.pass,header,footer,.overview{background:white;border:1px solid #d8dfe6;border-radius:8px;padding:1rem;margin:1rem 0}"
-            "table{border-collapse:collapse;width:100%;display:block;overflow-x:auto}caption{text-align:left;font-weight:600;padding:.5rem 0}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #d8dfe6;padding:.5rem;white-space:pre-wrap;overflow-wrap:anywhere}"
-            ".numeric,.outcome-table td:nth-child(n+2){text-align:right;font-variant-numeric:tabular-nums}tbody th[scope=row]{font-weight:600}"
-            "label{display:inline-block;margin:.3rem}select,button{font:inherit;max-width:14rem}button{padding:.35rem .7rem;border:1px solid #526879;border-radius:4px;background:white;color:#18222c;cursor:pointer}"
-            "button:hover{background:#e9eff2}button:active{background:#dce6eb}a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #176c8a;outline-offset:3px}"
-            "details{margin-top:1rem}.notice{border-left:3px solid #176c8a;padding-left:.75rem}.contents-pass{margin-left:1rem}.skip-link{position:absolute;left:-10000px;top:auto}.skip-link:focus{left:1rem;top:1rem;z-index:2;background:white;padding:.4rem}"
-            ".pass[hidden],article[hidden],[hidden]{display:none!important}svg{max-width:100%;margin:.5rem 0}</style></head><body>"
+            "<meta name='description' content='Local classification benchmark comparison and evidence.'>"
+            f"<style>{_REPORT_CSS}</style></head><body>"
             "<a class='skip-link' href='#main-content'>Skip to main content</a>"
-            f"<header><h1>{_h(task['name'])}</h1><p>Private local classification report</p>" + synthetic_notice +
-            "<h2>Whole experiment summary (unfiltered)</h2><p>Filters below apply to pass details. "
-            "The totals and findings in this summary always cover the complete experiment.</p>"
+            f"<header class='masthead'><div class='shell'><span class='eyebrow'>Private local classification report</span>"
+            f"<h1>{_h(task['name'])}</h1><p class='lead'>Compare recorded classifications across models, prompts and passes.</p>"
+            + synthetic_notice +
+            f"<div class='overview-meta'><div><span class='meta-label'>Planned positions</span><span class='meta-value'>{total}</span></div>"
+            f"<div><span class='meta-label'>Configurations</span><span class='meta-value'>{len(configs)}</span></div>"
+            f"<div><span class='meta-label'>Prompts</span><span class='meta-value'>{len(prompts)}</span></div>"
+            f"<div><span class='meta-label'>Passes per condition</span><span class='meta-value'>{plan['experiment']['repeats']}</span></div>"
+            "<div><span class='meta-label'>Evidence</span><span class='meta-value'>Local source digests</span></div></div>"
+            "<nav class='jump-nav' aria-label='Report sections'><a href='#comparison-heading'>Comparison</a>"
+            "<a href='#summary-heading'>Whole experiment</a><a href='#detail-heading'>Pass evidence</a>"
+            "<a href='#provenance-heading'>Provenance</a></nav></div></header>"
+            "<main id='main-content' class='shell'>"
+            "<section class='comparison-section' aria-labelledby='comparison-heading'><div class='section-intro'>"
+            "<div><span class='eyebrow'>01 / Compare</span><h2 id='comparison-heading'>Compare configurations and prompts</h2>"
+            "<p>Exact agreement uses every planned position. Missing and invalid predictions earn no credit.</p></div></div>"
+            "<div class='comparison-tools'><label for='comparison-search'>Search model, configuration or prompt"
+            "<input id='comparison-search' type='search' autocomplete='off'></label>"
+            "<small>Use column headings to sort. Unavailable measurements sort last.</small></div>"
+            + comparison +
+            f"<p class='status-line' id='comparison-status' role='status' aria-live='polite'>Showing {len(comparison_rows)} of {len(comparison_rows)} configurations and prompts.</p>"
+            "<p id='comparison-empty' hidden>No configurations or prompts match this search.</p>"
+            "<p class='status-line'>Observed cost totals include recorded charges only; coverage is shown against planned requests. Estimates remain in request details.</p></section>"
+            "<section class='summary-section' aria-labelledby='summary-heading'><div>"
+            "<span class='eyebrow'>02 / Scope</span><h2 id='summary-heading'>Whole experiment summary (unfiltered)</h2>"
+            "<p>These counts and findings cover the complete experiment. Filters below affect pass details only.</p>"
             f"<p>Planned positions: {total}; valid selected predictions: {valid_count}; no selected prediction: {result['missing']}; invalid selected projection: {len(result['invalid'])}.</p>"
-            "<h2>Observed position outcomes</h2>"
+            "</div><div class='summary-data'><h3>Observed position outcomes</h3>"
             + _table(("Outcome", "Positions", "Planned denominator"),
                      [(status, count, total) for status, count in sorted(outcome_counts.items())],
                      caption="Observed outcomes across the whole experiment", class_name="outcome-table")
             + "<p>Each planned position appears once in this table. A missing selected prediction can correspond to a refusal, failure, unknown dispatch, or a request without observed evidence.</p>"
             "<p>Scores use all planned positions. Positions without valid selected predictions receive no agreement credit. "
             "Request timing is measured per request, which may contain a batch; it is not per-case inference latency.</p>"
-            "<h2>Findings</h2>" + "".join(f"<p>{x}</p>" for x in findings)
-            + "<nav aria-label='Report filters'>" + " ".join(filters) +
+            "<h3>Findings</h3>" + "".join(f"<p>{x}</p>" for x in findings)
+            + "</div></section><section class='filters' aria-label='Pass filters'><span class='eyebrow'>03 / Inspect</span>"
+            "<h2 id='detail-heading'>Pass evidence</h2><p>Filter the pass details without changing the comparison or experiment totals.</p>"
+            + "<nav class='filter-grid' aria-label='Report filters'>" + " ".join(filters) +
             " <button type='button' id='reset-filters'>Reset filters</button></nav>"
             f"<p id='filter-status' role='status' aria-live='polite'>Showing {sum(len(c['passes']) for c in result['conditions'])} of {sum(len(c['passes']) for c in result['conditions'])} pass sections.</p>"
-            "<p id='filter-empty' hidden>No pass sections match these filters. Reset filters to show all passes.</p></header>"
-            "<main id='main-content'>"
-            "<section class='overview' aria-labelledby='comparison-heading'><h2 id='comparison-heading'>Compare configurations and prompts</h2>"
-            "<p>This overview always includes every pass. Exact agreement uses every planned position; missing and invalid predictions receive no credit. "
-            "Observed cost totals include recorded charges only, with coverage shown against planned requests. Estimates are reported separately in request details.</p>"
-            + comparison + "</section>"
-            + "<nav class='overview' data-contents aria-label='Report contents'><h2>Contents</h2><ul>" + "".join(contents) + "</ul></nav>"
+            "<p id='filter-empty' hidden>No pass sections match these filters. Reset filters to show all passes.</p></section>"
+            + "<nav class='detail-index' data-contents aria-label='Report contents'><h2>Contents</h2><ul>" + "".join(contents) + "</ul></nav>"
             + "".join(pages) + "</main>"
-            + "<footer><h2>Provenance</h2><p>Canonical JSON SHA-256 digests bind the task, plan, references, selected prediction set and any supplied operation records. "
+            + "<footer class='provenance'><div class='shell'><h2 id='provenance-heading'>Provenance</h2><p>Canonical JSON SHA-256 digests bind the task, plan, references, selected prediction set and any supplied operation records. "
             "The evaluator validates planned positions and predictions; the caller is responsible for verifying operation records. "
             "This file includes private inputs and reference labels. Keep it local.</p>"
-            "<p>Token fields follow <a href='https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion'>OpenRouter's chat response schema</a>. "
-            "Cache reads and writes follow <a href='https://openrouter.ai/docs/guides/best-practices/prompt-caching'>OpenRouter's caching documentation</a>.</p>"
+            "<p>Usage fields retain provider-specific evidence, available in each request's raw usage disclosure. "
+            "OpenRouter routes use <a href='https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion'>OpenRouter's chat response schema</a> "
+            "and <a href='https://openrouter.ai/docs/guides/best-practices/prompt-caching'>caching documentation</a>; native decision routes use their own provider schemas.</p>"
             + _table(("Source", "SHA-256"), source_rows, caption="Source digests", row_header=True)
-            + "</footer><script>" + script + "</script></body></html>")
+            + "</div></footer><script>" + script + "</script></body></html>")
 
 
 def _filter_values(key, plan, operations):

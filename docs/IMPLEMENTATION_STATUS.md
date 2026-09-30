@@ -1,8 +1,18 @@
-# Implementation status: 2026-09-28
+# Implementation status: 2026-09-30
 
 The first runner and report are implemented and offline verified. The newly authorized product smoke verified the current adapter with three valid responses and independently checked delayed identity metadata; see [live identity results](LIVE_IDENTITY_SMOKE_RESULT.md). The release is not complete: updated report visual/keyboard verification remains pending. The user confirmed report readability and supplied filtering/expansion evidence; independent subagent operator reproduction passed; see [operator results](OPERATOR_CHECK_RESULT.md). The repository is private; the active candidate-experience benchmark was not edited or rerun.
 
-## Verified locally
+## Native providers and report extension
+
+The new native adapters cover Liquid `d1:free`, Upstage `solar-decide` and Alibaba `decision-model-preview`. [Provider contracts](DECISION_PROVIDER_CONTRACTS.md) bind the documented native routes. [Native operation](NATIVE_DECISIONS.md) explains the separate keys, reviewed billing evidence, one-record call topology and unresolved-charge holds. No native provider call has been made; provider acceptance and billing evidence remain pending. [OpenAI Decisions](OPENAI_DECISIONS_STATUS.md) is announced but has no verified public contract in this implementation.
+
+The [report redesign](REPORT_REDESIGN.md) puts model comparisons first, with search, numeric sorting, visible missing/invalid counts and expandable raw usage. Fresh fictional product and candidate workflows each completed 24 synthetic requests and preserved 36 classification positions. Their private HTML and embedded JavaScript syntax were checked. Direct rendered appearance and keyboard behavior remain pending under the local-file browser restriction. Use the [visual checklist](REPORT_UX_CHECK.md).
+
+The final integrated suite passed **186 tests with no skips** on macOS: `python3 -m unittest discover -s tests -v` (47.157 seconds). Native fixtures cover fixed routes, credential separation, typed responses, malformed values, billing bounds and expiry, partial transport, unknown-cost holds, pause/stop, receipt recovery and no replay. Native token counts now reach both operation exports and report summaries. A multi-configuration preflight failure test exposed a scheduler reclaim loop; the scheduler now claims its selected request atomically, preserving default claim order for other callers.
+
+Independent review: **APPROVE**, no confirmed BLOCKING findings remain. **RESIDUAL:** billing/free entitlement remains an operator assertion; a matching source hash does not prove an account rate. **RESIDUAL:** Qwen provider framing near the context limit may reject or truncate input. **RESIDUAL, unconfirmed:** one baseline run hit a macOS process-group EPERM while cleaning up an output-limited child. Ten isolated repeats and the final integrated suite passed; no speculative isolation change was made.
+
+## Previous verification, 2026-09-28
 
 `python3 -m unittest discover -s tests -v` passed **160 tests with no skips** on macOS after running outside the enclosing development sandbox. The original baseline passed 78 tests. The expanded suite includes actual reference/symlink denials and environment scrubbing under both offline and HTTPS-enabled profiles, crash/receipt recovery, atomic shared budgets and cap-amendment races, mocked HTTP errors/partial bodies and identity checks, matrix ordering and process locking, pause/stop/top-up behavior, immutable report snapshots, and subprocess reproduction of both fictional task workflows.
 
@@ -19,7 +29,7 @@ The generic OpenRouter identity update captures the public requested-to-canonica
 ## Implemented boundaries
 
 - Deterministic task/input/prompt/configuration/repeat/batch planning and preview; reference labels remain outside execution inputs.
-- An adapter protocol, one pinned OpenRouter implementation, a public catalog helper and explicit unsupported-configuration rows. No subscription or native specialist method is substituted.
+- An adapter protocol, one pinned OpenRouter implementation, native Liquid/Solar/Qwen categorical implementations, a public OpenRouter catalog helper and explicit unsupported-configuration rows. Unsupported methods are never silently substituted.
 - A shared SQLite ledger, verified raw artifacts, durable transport metadata, process-locked orchestration, per-provider concurrent-request limits and declaration order within configurations.
 - Explicit no-retry inference, retained unknown-cost holds, safe never-sent continuation, parsed-outcome recovery after receipt publication, and visible preflight blockers.
 - Operator-configurable caps for smoke and full runs, `pause` or `stop` at exhaustion, and conditional run-bound cap increases with immutable history. Increases do not clear holds or above-bound freezes.
