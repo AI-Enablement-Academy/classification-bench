@@ -31,6 +31,10 @@ Evidence levels below distinguish implementation, offline verification, historic
 | Version reference corrections and retain history | [Reference format](FORMATS.md), [source hashes](../classification_bench/core.py), [no-overwrite tests](../tests/test_core.py) | Implemented contract and offline evidence: references are separate versions, evaluation binds their digest, and output paths do not overwrite old results. Human adjudication remains external. |
 | Tested exact-file commit/push and accurate delivery records | [Status](IMPLEMENTATION_STATUS.md), [handoff](HANDOFF.md), [current goal](NEXT_TASK_GOAL.md) | Implementation checkpoint was pushed and tested. The accompanying documentation delivery records exact-file staging, commit and local/remote hash verification; that delivery check is separate from the pending visual/provider gates. |
 
+## Browser access recheck, 2026-10-01
+
+The operator explicitly requested a new bundled Browser attempt. The exact file URL was rejected before loading with an enforced protocol policy; see [the verbatim rejection and report hashes](BROWSER_ACCEPTANCE_20261001.md). User permission is established, but rendered verification remains unavailable. No prohibited workaround was attempted.
+
 ## Updated goal mapping
 
 The revised goal preserves the acceptance boundary and explicitly names five core gates: independent operator reproduction (passed), offline failure/budget/recovery tests (passed at the unchanged implementation checkpoint), existing OpenRouter evidence applicability (passed within the digest limits above), latest rendered report acceptance (pending), and accurate documentation/private remote (verified with each delivery commit). Shared Ruflo retrieval and canonical decision/pattern save-back were verified during the acceptance pass.
