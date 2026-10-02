@@ -19,3 +19,13 @@ The updated goal names [Recruitly's model benchmarks](https://recruitly.io/ai/mo
 The current local report follows that comparison-first structure through prominent configuration/model names, search, numeric sorting and adjacent agreement, invalid-output, cost and duration information. Detailed evidence remains expandable below the overview. Its design and metrics remain specific to this generic categorical benchmark: full planned denominators and unavailable measurements stay explicit, and currencies remain separate. Recruitly's scores, confidence thresholds and operational fallback policy are not adopted as benchmark rules.
 
 Rendered polish relative to the reference remains pending the [visual and interaction checklist](REPORT_UX_CHECK.md). Source inspection alone cannot establish equivalent visual quality.
+
+## Cloudflare reference, inspected 2026-10-02
+
+The public [Decision Model Leaderboard](https://clef-evals.workers-ai-mle.workers.dev/) was inspected with the bundled Browser, including rendered screenshots and the Charts and Methodology tabs. It uses horizontal score bars, quality-versus-latency scatter plots, selected-model area profiles, and calibration-versus-quality plots. The leaderboard has search and row-level benchmark breakdowns, while methodology and source qualifications are separate.
+
+Its most useful patterns for this report are a comparison overview, deliberate selection, chart links into evidence, and visible provenance and measurement limitations. Its methodology distinguishes author-reported Clef results from upstream community results and warns that latency from different serving stacks is not directly comparable. Our client request duration must remain labeled as such. Probability output alone does not establish calibration; a calibration plot needs a separately defined, evaluated metric.
+
+The displayed model list includes Clef, Clef-Flash, Jev, Decider, Kev, GLiNER-based models and other community models. This is a dated discovery reference, not an exhaustive or verified runnable catalog. No listed external score is imported as a result of this benchmark, and no extra adapter or inference scope follows from a model appearing there. Verify a candidate's native interface, artifact/version, access and billing before adding it to an experiment.
+
+Model-type groups and execution-route categories answer different questions. General LLM, fine-tuned LLM and classification/decision are operator-declared reporting groups; a decision model can itself be derived from a fine-tuned LLM. Unspecified metadata stays visible. Changing a declaration creates a new frozen plan rather than relabeling historical evidence.

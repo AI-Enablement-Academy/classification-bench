@@ -7,6 +7,7 @@ import json
 import math
 
 from .core import ValidationError, _digest, evaluate
+from .report_visuals import agreement_duration_plot
 
 
 def _h(value):
@@ -45,6 +46,10 @@ def _table(headers, rows, *, caption=None, row_header=False, numeric_columns=(),
 def _adapter_category(settings):
     """Group only declared adapter identities, never model-name guesses."""
     adapter = settings.get("adapter")
+    if adapter is None or adapter == "":
+        return "Adapter unspecified"
+    if not isinstance(adapter, str):
+        return "Invalid declared adapter"
     if adapter == "openrouter":
         return "OpenRouter"
     if adapter in {"liquid_decide", "solar_decide", "qwen_decision",
@@ -52,7 +57,15 @@ def _adapter_category(settings):
         return "Native decisions"
     if adapter == "synthetic":
         return "Synthetic"
-    return "Other declared adapter" if adapter else "Adapter unspecified"
+    return "Other declared adapter"
+
+
+_MODEL_TYPE_LABELS = {
+    "llm": "General LLM",
+    "fine_tuned_llm": "Fine-tuned LLM",
+    "decision": "Classification / decision",
+    "unspecified": "Unspecified",
+}
 
 
 _NATIVE_PROVIDER = {"liquid_decide": "liquid", "solar_decide": "upstage",
@@ -63,10 +76,27 @@ _NATIVE_MODEL = {"liquid_decide": "d1:free", "solar_decide": "solar-decide",
                  "clef_flash_decide": "clef-flash"}
 
 
+def _native_provider(settings):
+    adapter = settings.get("adapter")
+    return _NATIVE_PROVIDER.get(adapter) if isinstance(adapter, str) else None
+
+
+def _first_metadata(*values):
+    return next((value for value in values if value is not None and value != ""), None)
+
+
+def _display_metadata(value, fallback="unavailable"):
+    if value is None or value == "":
+        return fallback
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False)
+
+
 def _native_requested_route(config):
     settings = config.get("settings", {})
     adapter = settings.get("adapter")
-    provider = _NATIVE_PROVIDER.get(adapter)
+    provider = _native_provider(settings)
     return f"{provider}:{config['model']}" if provider and config["model"] == _NATIVE_MODEL[adapter] else None
 
 
@@ -87,7 +117,7 @@ def _comparison_table(rows):
         if kind != "static" else f"<th scope='col'>{_h(label)}</th>"
         for label, key, kind in columns)
     body = []
-    for entry in rows:
+    for plot_id, entry in enumerate(rows):
         values = entry["display"]
         keys = entry["sort"]
         cells = []
@@ -96,7 +126,7 @@ def _comparison_table(rows):
             if index == 0:
                 content = (f"<strong class='model-name'>{_h(entry['model'])}</strong>"
                            f"<span class='model-meta'>{_h(value)} · requested provider: {_h(entry['provider'])}</span>"
-                           f"<span class='model-meta'>{_h(entry['category'])} · route: {_h(entry['route'])}</span>"
+                           f"<span class='model-meta'>Declared group: {_h(entry['model_type_label'])} · {_h(entry['category'])} · route: {_h(entry['route'])}</span>"
                            f"<span class='quality-note{' has-gaps' if entry['has_gaps'] else ''}'>{_h(entry['status'])}</span>"
                            f"<span class='row-actions'><label><input type='checkbox' class='compare-select' "
                            f"aria-label='Compare {_h(entry['model'])}, {_h(entry['config'])}, {_h(entry['prompt'])}'"
@@ -108,6 +138,8 @@ def _comparison_table(rows):
         body.append(f"<tr data-config-id='{_h(entry['config'])}' data-prompt-id='{_h(entry['prompt'])}' "
                     f"data-prompt='{_h(entry['prompt'])}' "
                     f"data-category='{_h(entry['category'])}' data-model='{_h(entry['model'])}' "
+                    f"data-model-type='{_h(entry['model_type'])}' data-model-type-label='{_h(entry['model_type_label'])}' "
+                    f"data-plot-id='{plot_id}' data-plot-state='{entry['plot_state']}' "
                     f"data-provider='{_h(entry['provider'])}' data-route='{_h(entry['route'])}'>"
                     + "".join(cells) + "</tr>")
     return ("<div class='table-scroll' tabindex='0' role='region' aria-label='Configuration comparison table'>"
@@ -479,6 +511,8 @@ details{margin-top:1rem}.raw-usage pre{max-height:24rem;overflow:auto;padding:1r
 .row-actions{display:flex;gap:.7rem;align-items:center;flex-wrap:wrap;margin-top:.8rem;font-size:.75rem;font-weight:600}.row-actions label{display:inline-flex;align-items:center;gap:.3rem;cursor:pointer}.row-actions input{accent-color:var(--accent)}.row-actions a{white-space:nowrap}.selection-section{margin-top:1.4rem;padding:1.5rem 0;border-top:1px solid var(--line)}.selection-section h3{margin:.3rem 0}.selection-section .section-intro p{font-size:.84rem;max-width:48ch}.selection-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.selection-card{padding:1.3rem;background:var(--surface);border-top:3px solid var(--accent);min-width:0}.selection-card>p{font-size:.8rem;color:var(--muted);overflow-wrap:anywhere}.selection-card dl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.3rem .8rem;margin:1rem 0 0;font-size:.82rem}.selection-card dt,.selection-card dd{border-top:1px solid var(--line);margin:0;padding:.45rem 0}.selection-card dd{text-align:right;font-variant-numeric:tabular-nums;max-width:22ch}.selection-outside{color:var(--danger)!important;font-weight:650}.compare-select:disabled{cursor:not-allowed}
 .selection-section>button{margin:.2rem 0 1rem;padding:.5rem .75rem;border:1px solid var(--accent);background:transparent;color:var(--accent);font:inherit;cursor:pointer}.selection-section>button:hover:not(:disabled){background:var(--soft)}.selection-section>button:disabled{opacity:.45;cursor:default}
 .category-rail button,.comparison-tools button,.row-actions a,.selection-card,.jump-nav a{transition:background-color .18s ease,color .18s ease,transform .18s ease}.category-rail button:active,.comparison-tools button:active{transform:translateY(1px)}.category-rail button:focus-visible,.comparison-tools button:focus-visible,.row-actions input:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.rail-label{margin:1.2rem 0 0;color:var(--muted);font-size:.72rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase}.category-rail{padding-top:.35rem}.duration-overview{margin:2rem 0 0;padding:1.5rem;background:var(--surface);border-top:2px solid var(--ink)}.duration-overview-intro{display:flex;justify-content:space-between;gap:1.5rem;flex-wrap:wrap}.duration-overview-intro p{font-size:.84rem;color:var(--muted)}.agreement-duration-chart{display:block;width:min(100%,780px);height:auto;margin:1rem auto;color:var(--muted);font-size:12px;font-family:inherit}.plot-axis{stroke:var(--ink);stroke-width:1.4}.plot-guide{stroke:var(--line);stroke-width:1;stroke-dasharray:4 4}.duration-point circle{fill:var(--accent);stroke:var(--surface);stroke-width:2}.duration-point:hover circle,.duration-point:focus-visible circle{fill:var(--ink);stroke:var(--accent);stroke-width:4}.duration-point:focus-visible{outline:none}.duration-point:focus-visible circle{filter:drop-shadow(0 0 3px var(--accent))}.duration-overview .status-line{margin-bottom:0}
+.plot-key{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,19rem),1fr));gap:.45rem 1.25rem;margin:0;padding:0;list-style:none}.plot-key-row{display:flex;align-items:baseline;gap:.25rem .65rem;flex-wrap:wrap;border-top:1px solid var(--line);padding:.55rem 0;font-size:.78rem}.plot-key-row a{font-weight:700}.plot-key-row span{color:var(--muted)}
 @media(max-width:760px){.jump-nav .shell{flex-wrap:nowrap;overflow-x:auto}.jump-nav a{white-space:nowrap}.selection-cards{grid-template-columns:1fr}.comparison-tools label{width:calc(50% - .7rem)}.comparison-tools input,.comparison-tools select{width:100%;max-width:none}.selection-card dl{grid-template-columns:minmax(0,1fr) minmax(8rem,auto)}}
 @media(max-width:500px){.comparison-tools label{width:100%}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
@@ -577,15 +611,15 @@ def generate_report(task, plan, labels, predictions, operations=None):
             costs[repeat] = sum(charges) if charges else None
             metadata = {key: next((o.get(key) for o in ops if o.get(key) is not None), None)
                         for key in ("provider", "model", "route", "effort")}
-            metadata["model"] = metadata["model"] or config["model"]
+            metadata["model"] = _display_metadata(_first_metadata(metadata["model"], config["model"]))
             for key in ("provider", "route", "effort"):
-                metadata[key] = metadata[key] or settings.get(key) or (
-                    _NATIVE_PROVIDER.get(settings.get("adapter")) if key == "provider" else
-                    _native_requested_route(config) if key == "route" else
-                    settings.get("reasoning") if key == "effort" else None)
+                fallback = (_native_provider(settings) if key == "provider" else
+                            _native_requested_route(config) if key == "route" else
+                            settings.get("reasoning"))
+                metadata[key] = _display_metadata(_first_metadata(metadata[key], settings.get(key), fallback))
             values = {"task": task["name"], "model": metadata["model"], "provider": metadata["provider"],
                       "effort": metadata["effort"], "prompt": pid, "repeat": str(repeat), "route": metadata["route"]}
-            attributes = " ".join(f"data-{key}='{_h(value if value is not None else 'unavailable')}'"
+            attributes = " ".join(f"data-{key}='{_h(value)}'"
                                   for key, value in values.items())
             field_rows = []
             for field in task["fields"]:
@@ -653,6 +687,10 @@ def generate_report(task, plan, labels, predictions, operations=None):
         duration = (f"{_number(sum(duration_values) / len(duration_values), ' s')} mean "
                     f"({len(duration_values)}/{len(condition_requests)} requests measured)"
                     if duration_values else f"unavailable (0/{len(condition_requests)} requests measured)")
+        synthetic_timing = (settings.get("adapter") == "synthetic" or
+                            any(str(op.get("route", "")).startswith("synthetic:")
+                                or op.get("cost_currency") == "SYN" for op in condition_ops))
+        model_type = config.get("model_type", "unspecified")
         charge_groups = defaultdict(list)
         for op in condition_ops:
             charge = op.get("observed_cost_micro_usd")
@@ -667,12 +705,21 @@ def generate_report(task, plan, labels, predictions, operations=None):
         comparison_rows.append({
             "config": cid, "prompt": pid, "model": config["model"],
             "anchor": condition_anchor, "category": _adapter_category(settings),
-            "route": settings.get("route") or _native_requested_route(config) or ", ".join(sorted({
-                str(op["route"]) for op in condition_ops if op.get("route")
-            })) or "unavailable",
-            "provider": settings.get("provider") or _NATIVE_PROVIDER.get(settings.get("adapter")) or ", ".join(sorted({
-                op["provider"] for op in condition_ops if op.get("provider")
-            })) or "provider unavailable",
+            "model_type": model_type, "model_type_label": _MODEL_TYPE_LABELS[model_type],
+            "plot_state": "synthetic" if synthetic_timing else "measured" if duration_values else "unavailable",
+            "duration_mean": sum(duration_values) / len(duration_values) if duration_values else None,
+            "duration_measured": len(duration_values), "duration_planned": len(condition_requests),
+            "exact_numerator": exact, "exact_denominator": denominator,
+            "exact_fraction": exact / denominator if denominator else 0,
+            "route": _display_metadata(_first_metadata(
+                settings.get("route"), _native_requested_route(config),
+                ", ".join(sorted({_display_metadata(op["route"]) for op in condition_ops
+                                  if _first_metadata(op.get("route")) is not None})))),
+            "provider": _display_metadata(_first_metadata(
+                settings.get("provider"), _native_provider(settings),
+                ", ".join(sorted({_display_metadata(op["provider"]) for op in condition_ops
+                                  if _first_metadata(op.get("provider")) is not None}))),
+                "provider unavailable"),
             "status": (f"{invalid_count + missing_count} selected prediction gap(s)"
                        if invalid_count + missing_count else "Selected predictions complete"),
             "has_gaps": invalid_count + missing_count > 0,
@@ -721,6 +768,13 @@ def generate_report(task, plan, labels, predictions, operations=None):
     if operations:
         source_rows.append(("supplied operations", _digest(operations)))
     categories = Counter(row["category"] for row in comparison_rows)
+    model_types = Counter(row["model_type"] for row in comparison_rows)
+    model_type_buttons = ("<button type='button' data-model-type-choice='' aria-pressed='true'>"
+                          "All model types <span>" + str(len(comparison_rows)) + "</span></button>")
+    model_type_buttons += "".join(
+        f"<button type='button' data-model-type-choice='{key}' aria-pressed='false'>"
+        f"{_h(label)} <span>{model_types[key]}</span></button>"
+        for key, label in _MODEL_TYPE_LABELS.items())
     category_buttons = "<button type='button' data-category-choice='' aria-pressed='true'>All conditions <span>" + str(len(comparison_rows)) + "</span></button>"
     category_buttons += "".join(
         f"<button type='button' data-category-choice='{_h(category)}' aria-pressed='false'>"
@@ -752,8 +806,8 @@ def generate_report(task, plan, labels, predictions, operations=None):
       filters.forEach(select => { select.value = ''; });
       applyFilters();
     });
-    document.querySelectorAll("[data-contents] a[href^='#'], .row-actions a[href^='#']").forEach(link => link.addEventListener('click', () => {
-      const target = document.getElementById(link.hash.slice(1));
+    document.querySelectorAll("[data-contents] a[href^='#'], .row-actions a[href^='#'], .duration-point[href^='#'], .plot-key-row a[href^='#']").forEach(link => link.addEventListener('click', () => {
+      const target = document.getElementById(link.getAttribute('href').slice(1));
       if (target && (target.hidden || target.closest('article[hidden]'))) {
         filters.forEach(select => { select.value = ''; });
         applyFilters();
@@ -764,16 +818,44 @@ def generate_report(task, plan, labels, predictions, operations=None):
     const comparisonSearch = document.getElementById('comparison-search');
     const comparisonFilters = [...document.querySelectorAll('[data-comparison-filter]')];
     const categoryButtons = [...document.querySelectorAll('[data-category-choice]')];
+    const modelTypeButtons = [...document.querySelectorAll('[data-model-type-choice]')];
+    const plotPoints = [...document.querySelectorAll('.duration-point')];
+    const plotById = new Map(plotPoints.map(point => [point.dataset.plotId, point]));
+    const plotLabels = new Map([...document.querySelectorAll('.plot-key-row')].map(item => [item.dataset.plotId, item]));
     let activeCategory = '';
+    let activeModelType = '';
     function applyComparisonSearch() {
       const query = comparisonSearch.value.trim().toLocaleLowerCase();
       let visible = 0;
       comparisonRows.forEach(row => {
         row.hidden = (Boolean(query) && !row.textContent.toLocaleLowerCase().includes(query)) ||
           (Boolean(activeCategory) && row.dataset.category !== activeCategory) ||
+          (Boolean(activeModelType) && row.dataset.modelType !== activeModelType) ||
           comparisonFilters.some(filter => filter.value && row.dataset[filter.dataset.comparisonFilter] !== filter.value);
         if (!row.hidden) visible += 1;
       });
+      let plotted = 0;
+      let unavailable = 0;
+      let synthetic = 0;
+      comparisonRows.forEach(row => {
+        const point = plotById.get(row.dataset.plotId);
+        const label = plotLabels.get(row.dataset.plotId);
+        if (point) {
+          if (row.hidden) point.setAttribute('hidden', '');
+          else point.removeAttribute('hidden');
+        }
+        if (label) label.hidden = row.hidden;
+        if (row.hidden) return;
+        if (row.dataset.plotState === 'measured') plotted += 1;
+        else if (row.dataset.plotState === 'synthetic') synthetic += 1;
+        else unavailable += 1;
+      });
+      const chart = document.getElementById('agreement-duration-chart');
+      if (plotted === 0) chart.setAttribute('hidden', '');
+      else chart.removeAttribute('hidden');
+      document.getElementById('plot-empty').hidden = plotted !== 0;
+      document.getElementById('plot-status').textContent =
+        `${plotted} plotted of ${visible} visible conditions; ${unavailable} lack measured duration; ${synthetic} synthetic conditions excluded. Axes use all measured nonsynthetic conditions.`;
       document.getElementById('comparison-status').textContent =
         `Showing ${visible} of ${comparisonRows.length} configurations and prompts in this comparison view. Whole-experiment totals remain unfiltered.`;
       document.getElementById('comparison-empty').hidden = visible !== 0;
@@ -786,9 +868,16 @@ def generate_report(task, plan, labels, predictions, operations=None):
       categoryButtons.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
       applyComparisonSearch();
     }));
+    modelTypeButtons.forEach(button => button.addEventListener('click', () => {
+      activeModelType = button.dataset.modelTypeChoice;
+      modelTypeButtons.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+      applyComparisonSearch();
+    }));
     document.getElementById('reset-comparison').addEventListener('click', () => {
       activeCategory = '';
+      activeModelType = '';
       categoryButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.categoryChoice === '')));
+      modelTypeButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.modelTypeChoice === '')));
       comparisonSearch.value = '';
       comparisonFilters.forEach(filter => { filter.value = ''; });
       applyComparisonSearch();
@@ -808,7 +897,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
         title.textContent = `${row.dataset.model} · ${row.dataset.promptId}`;
         card.appendChild(title);
         const meta = document.createElement('p');
-        meta.textContent = `${row.dataset.configId} · ${row.dataset.category} · requested provider: ${row.dataset.provider} · route: ${row.dataset.route}`;
+        meta.textContent = `${row.dataset.configId} · declared group: ${row.dataset.modelTypeLabel} · ${row.dataset.category} · requested provider: ${row.dataset.provider} · route: ${row.dataset.route}`;
         card.appendChild(meta);
         if (row.hidden) {
           const outside = document.createElement('p');
@@ -892,6 +981,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
     applyComparisonSearch();
     applyFilters();"""
     comparison = _comparison_table(comparison_rows)
+    overview_plot = agreement_duration_plot(comparison_rows)
     synthetic_notice = ("<p class='notice'>Contains synthetic results: SYN units are local accounting, not provider charges.</p>"
                         if any(config.get("settings", {}).get("adapter") == "synthetic" for config in configs.values())
                         or any(str(op.get("route", "")).startswith("synthetic:") for op in operations) else "")
@@ -916,15 +1006,19 @@ def generate_report(task, plan, labels, predictions, operations=None):
             "<section class='comparison-section' aria-labelledby='comparison-heading'><div class='section-intro'>"
             "<div><span class='eyebrow'>01 / Compare</span><h2 id='comparison-heading'>Compare configurations and prompts</h2>"
             "<p>Exact agreement uses every planned position. Missing and invalid predictions earn no credit.</p></div></div>"
+            "<p class='rail-label'>Operator-declared model group</p>"
+            "<nav class='category-rail' aria-label='Operator-declared model groups'>" + model_type_buttons + "</nav>"
+            "<p class='rail-label'>Adapter category</p>"
             "<nav class='category-rail' aria-label='Declared adapter categories'>" + category_buttons + "</nav>"
             "<div class='comparison-tools'><label for='comparison-search'>Search model, configuration or prompt"
             "<input id='comparison-search' type='search' autocomplete='off'></label>"
             + " ".join(comparison_filters) +
             "<button type='button' id='reset-comparison'>Reset comparison view</button></div>"
-            "<p class='status-line'>Categories use declared adapter identities. Use column headings to sort; unavailable measurements sort last.</p>"
+            "<p class='status-line'>Model groups are declared in the configuration. A decision group describes the benchmark purpose; it does not verify model architecture or training history. Adapter categories describe requested execution. Use column headings to sort; unavailable measurements sort last.</p>"
             + comparison +
             f"<p class='status-line' id='comparison-status' role='status' aria-live='polite'>Showing {len(comparison_rows)} of {len(comparison_rows)} configurations and prompts in this comparison view. Whole-experiment totals remain unfiltered.</p>"
             "<p id='comparison-empty' hidden>No conditions match these comparison filters. Reset the comparison view to show all conditions.</p>"
+            + overview_plot +
             "<section class='selection-section' aria-labelledby='selection-heading'><div class='section-intro'>"
             "<div><span class='eyebrow'>Selected conditions</span><h3 id='selection-heading'>Compare two conditions</h3></div>"
             "<p>Values cover all planned passes for each selected condition. Compare costs only within the same currency and route context.</p></div>"
@@ -972,13 +1066,13 @@ def _filter_values(key, plan, operations):
         settings = config.get("settings", {})
         value = config["model"] if key == "model" else settings.get(key)
         if key == "provider" and value is None:
-            value = _NATIVE_PROVIDER.get(settings.get("adapter"))
+            value = _native_provider(settings)
         if key == "route" and value is None:
             value = _native_requested_route(config)
         if key == "effort" and value is None:
             value = settings.get("reasoning")
-        values.add(value or "unavailable")
+        values.add(_display_metadata(value))
     for op in operations:
         if key in op and op[key] is not None:
-            values.add(op[key])
+            values.add(_display_metadata(op[key]))
     return values

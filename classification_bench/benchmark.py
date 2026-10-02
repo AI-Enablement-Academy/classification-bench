@@ -159,11 +159,19 @@ _UNSUPPORTED_RUNTIME = OfflineRuntime(UnsupportedAdapter, identity_status="unsup
 def _runtime(config, supplied=None):
     if supplied is not None:
         return OfflineRuntime(lambda _: supplied)
-    return registry.get(config.get("settings", {}).get("adapter")) or _UNSUPPORTED_RUNTIME
+    adapter = config.get("settings", {}).get("adapter")
+    return (registry.get(adapter) if isinstance(adapter, str) else None) or _UNSUPPORTED_RUNTIME
+
+
+def _adapter_config(config):
+    """Pass execution controls to strict adapters; reporting metadata stays in the plan."""
+    if "model_type" not in config:
+        return config
+    return {key: value for key, value in config.items() if key != "model_type"}
 
 
 def _adapter(config, supplied=None):
-    return _runtime(config, supplied).create_adapter(config)
+    return _runtime(config, supplied).create_adapter(_adapter_config(config))
 
 
 def _load(config_path, adapter=None):
@@ -193,7 +201,7 @@ def _load(config_path, adapter=None):
     inputs, input_bytes = _load_json(config["inputs"])
     plan = build_plan(task, experiment, inputs)
     runtimes = {item["id"]: _runtime(item, adapter) for item in experiment["configs"]}
-    adapters = {item["id"]: runtimes[item["id"]].create_adapter(item)
+    adapters = {item["id"]: runtimes[item["id"]].create_adapter(_adapter_config(item))
                 for item in experiment["configs"]}
     offline = all(item.offline for item in runtimes.values())
     if offline:

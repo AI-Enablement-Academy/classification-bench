@@ -1,6 +1,20 @@
-# Release acceptance audit: 2026-09-30
+# Release acceptance audit: updated 2026-10-02
 
-The dated table below preserves the earlier checkpoint. The [2026-10-02 extension status](IMPLEMENTATION_STATUS.md) supersedes its native-provider and report descriptions: Clef/Clef-Flash support and the report explorer are implemented, 194 offline tests pass, and new private fixture reports were generated. Independent review returned APPROVE after resolving confirmed blockers. Saved OpenRouter read/export still preserves three operations, three predictions and all 31 archive-file digests with network connections forbidden. Native live acceptance and latest rendered acceptance remain pending; these are not closed by offline DOM tests. No new inference, credential transfer or publication occurred.
+## Current core gates
+
+| Gate | Current evidence | Status |
+| --- | --- | --- |
+| Independent generic operator reproduction | [Three-task reproduction](OPERATOR_RECHECK_20260930.md), current workflow regression suite | Passed within the recorded offline scope. |
+| Offline failure, budget exhaustion and recovery | Full suite: **203 tests in 55.050 seconds, no skips**; [current status](IMPLEMENTATION_STATUS.md) | Passed. Independent code review: **APPROVE**, no confirmed BLOCKING or RESIDUAL findings. |
+| Saved OpenRouter evidence audited against current code | [Final regeneration verification](../private-data/report-model-types-20261002/final/verification.json): three valid operations, completion and delayed metadata reparsed, three dispatch events, all 31 archive digests unchanged; network forbidden | Passed as historical protocol evidence; does not attest fresh dispatch of this build. |
+| Exact latest rendered report | [Current fixtures and ten-step checklist](REPORT_UX_CHECK.md) | **Pending.** DOM tests establish controls only. The recorded Browser restriction prevents agent rendering and workarounds; concrete operator observations remain the permitted path. |
+| Accurate documentation and private remote | Current contracts, [goal](NEXT_TASK_GOAL.md), exact-file delivery and private-remote verification | Verify with the delivery commit; this documentation does not pre-assert a future commit hash. |
+
+The model-group and client-duration plot update preserves every planned condition and full score denominator. Metadata is retained in frozen plans and removed only before strict adapter construction. [Final private reports](../private-data/report-model-types-20261002/final/verification.json) preserve 441 source-file digests; the unexecuted mixed fixture preserves all 72 missing positions without provider calls. Liquid/Solar/Qwen live acceptance remains separate. Clef/Clef-Flash [live integration](CLEF_LIVE_ACCEPTANCE_20261002.md) completed 42 valid observations under the user's USD 10 aggregate allowance; exact dollar charges remain unavailable with USD 0.454188 held. No funding change or publication occurred.
+
+## Preserved 2026-09-30 checkpoint
+
+The dated table below preserves the earlier checkpoint. The [2026-10-02 extension status](IMPLEMENTATION_STATUS.md) supersedes its native-provider and report descriptions: Clef/Clef-Flash support and the report explorer are implemented, the prior integrated suite passed 194 offline tests, and new private fixture reports were generated. Saved OpenRouter read/export preserves three operations, three predictions and all 31 archive-file digests with network connections forbidden. Subsequent [Clef/Flash live acceptance](CLEF_LIVE_ACCEPTANCE_20261002.md) completed all 42 prepared requests under the user's USD 10 aggregate approval, with no added dispatch on recovery/completed restart. Exact charges remain held; Liquid/Solar/Qwen live acceptance and latest rendered acceptance remain pending. No subscription/payment change or publication occurred. Offline DOM tests do not establish rendered acceptance.
 
 The [current goal](NEXT_TASK_GOAL.md) requires an independently reproducible generic workflow, safe failure/recovery behavior, applicable OpenRouter live evidence, and acceptance of the latest rendered report. **The core release remains pending the changed report's visual and interaction check.** Native-provider live acceptance is tracked separately.
 

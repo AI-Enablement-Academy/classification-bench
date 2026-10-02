@@ -41,6 +41,22 @@ class CoreTests(unittest.TestCase):
                             build_plan(self.task, altered, self.inputs)["requests"][0]["request_id"])
         self.assertEqual(len({r["request_id"] for r in plan["requests"]}), len(plan["requests"]))
 
+    def test_model_type_is_optional_declared_metadata_bound_to_new_plans(self):
+        original = build_plan(self.task, self.experiment, self.inputs)
+        self.assertNotIn("model_type", original["experiment"]["configs"][0])
+        for value in ("llm", "fine_tuned_llm", "decision"):
+            changed = copy.deepcopy(self.experiment)
+            changed["configs"][0]["model_type"] = value
+            plan = build_plan(self.task, changed, self.inputs)
+            self.assertEqual(plan["experiment"]["configs"][0]["model_type"], value)
+            self.assertNotEqual(plan["requests"][0]["request_id"], original["requests"][0]["request_id"])
+        self.assertEqual(original, build_plan(self.task, self.experiment, self.inputs))
+        for value in ("unknown", "native_decision", "", None, 1):
+            changed = copy.deepcopy(self.experiment)
+            changed["configs"][0]["model_type"] = value
+            with self.assertRaisesRegex(ValidationError, "config.model_type"):
+                build_plan(self.task, changed, self.inputs)
+
     def test_duplicate_ids_and_unknown_input_fields(self):
         bad = copy.deepcopy(self.inputs)
         bad["records"][1]["id"] = "toy-a"

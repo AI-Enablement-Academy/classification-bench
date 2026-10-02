@@ -392,6 +392,117 @@ class ReportUxTests(unittest.TestCase):
                    if node.attrs.get("class") == "jump-nav")
         self.assertEqual(len(list(nav.descendants("a"))), 4)
 
+    def test_declared_model_groups_are_distinct_from_adapter_categories(self):
+        self.experiment["configs"][0]["model_type"] = "llm"
+        self.experiment["configs"][0]["settings"]["adapter"] = "clef_decide"
+        self.experiment["configs"][1]["model_type"] = "fine_tuned_llm"
+        self.experiment["configs"][1]["settings"]["adapter"] = "openrouter"
+        self.experiment["configs"].extend([
+            {"id": "gamma", "model": "generic-name", "model_type": "decision",
+             "settings": {"adapter": "openrouter"}},
+            {"id": "delta", "model": "decision-sounding-name", "settings": {}},
+        ])
+        self.plan = build_plan(self.task, self.experiment, self.inputs)
+        page = Tree(generate_report(self.task, self.plan, self.labels, self.predictions)).root
+        type_buttons = [node for node in page.descendants("button")
+                        if "data-model-type-choice" in node.attrs]
+        self.assertEqual([(node.attrs["data-model-type-choice"], normalized(node))
+                          for node in type_buttons],
+                         [("", "All model types 8"), ("llm", "General LLM 2"),
+                          ("fine_tuned_llm", "Fine-tuned LLM 2"),
+                          ("decision", "Classification / decision 2"),
+                          ("unspecified", "Unspecified 2")])
+        rows = [node for node in page.descendants("tr") if "data-config-id" in node.attrs]
+        by_config = {node.attrs["data-config-id"]: (node.attrs["data-model-type"], node.attrs["data-category"])
+                     for node in rows}
+        self.assertEqual(by_config, {"alpha": ("llm", "Native decisions"),
+                                     "beta": ("fine_tuned_llm", "OpenRouter"),
+                                     "gamma": ("decision", "OpenRouter"),
+                                     "delta": ("unspecified", "Adapter unspecified")})
+        self.assertIn("Declared group: General LLM", normalized(rows[0]))
+        self.assertIn("model architecture or training history", normalized(page))
+        summary = next(node for node in page.descendants("section")
+                       if "summary-section" in node.attrs.get("class", "").split())
+        self.assertIn("Planned positions: 32", normalized(summary))
+
+    def test_agreement_duration_plot_excludes_unmeasured_conditions_and_keeps_coverage(self):
+        page = self.render()
+        chart = next(node for node in page.descendants("svg")
+                     if node.attrs.get("id") == "agreement-duration-chart")
+        points = [node for node in chart.descendants("a")
+                  if "duration-point" in node.attrs.get("class", "").split()]
+        self.assertEqual(len(points), 2)
+        self.assertTrue(all("Mean client request duration" in normalized(chart)
+                            for _ in points))
+        self.assertTrue(any("across 1/2 planned requests" in node.attrs["aria-label"]
+                            for node in points))
+        self.assertTrue(all(node.attrs["href"].startswith("#condition-") for node in points))
+        rows = [node for node in page.descendants("tr") if "data-config-id" in node.attrs]
+        self.assertEqual([node.attrs["data-plot-state"] for node in rows],
+                         ["measured", "measured", "unavailable", "unavailable"])
+        self.assertIn("Axes stay fixed when filters change", normalized(page))
+
+    def test_plot_excludes_synthetic_request_time_even_when_recorded(self):
+        self.experiment["configs"][1]["settings"]["adapter"] = "synthetic"
+        self.plan = build_plan(self.task, self.experiment, self.inputs)
+        request = next(item for item in self.plan["requests"]
+                       if item["config_id"] == "beta" and item["prompt_id"] == "plain")
+        page = Tree(generate_report(self.task, self.plan, self.labels, self.predictions,
+                                    [{"request_id": request["request_id"],
+                                      "duration_seconds": 1.25, "route": "synthetic:offline",
+                                      "cost_currency": "SYN"}])).root
+        rows = [node for node in page.descendants("tr") if "data-config-id" in node.attrs]
+        self.assertEqual([node.attrs["data-plot-state"] for node in rows],
+                         ["unavailable", "unavailable", "synthetic", "synthetic"])
+        chart = next(node for node in page.descendants("svg")
+                     if node.attrs.get("id") == "agreement-duration-chart")
+        self.assertFalse([node for node in chart.descendants("a")
+                          if "duration-point" in node.attrs.get("class", "").split()])
+
+    def test_accepted_json_settings_render_without_native_inference_or_losing_positions(self):
+        self.experiment["configs"][0]["settings"] = {
+            "adapter": ["clef_decide"], "provider": {"vendor": "fictional"},
+            "route": ["v1", {"mode": "demo"}], "effort": {"level": "high"},
+        }
+        self.experiment["configs"][1]["settings"] = {
+            "adapter": "unknown-runtime", "provider": ["provider-a"],
+            "route": {"route": "fictional"}, "effort": ["high"],
+        }
+        self.plan = build_plan(self.task, self.experiment, self.inputs)
+        page = Tree(generate_report(self.task, self.plan, self.labels, self.predictions)).root
+        rows = [node for node in page.descendants("tr") if "data-config-id" in node.attrs]
+        self.assertEqual(len(rows), 4)
+        self.assertEqual({node.attrs["data-config-id"]: node.attrs["data-category"] for node in rows},
+                         {"alpha": "Invalid declared adapter", "beta": "Other declared adapter"})
+        alpha = next(node for node in rows if node.attrs["data-config-id"] == "alpha")
+        self.assertEqual(alpha.attrs["data-provider"], '{"vendor": "fictional"}')
+        self.assertEqual(alpha.attrs["data-route"], '["v1", {"mode": "demo"}]')
+        self.assertNotIn("cloudflare:clef", normalized(alpha))
+        beta = next(node for node in rows if node.attrs["data-config-id"] == "beta")
+        self.assertEqual(beta.attrs["data-provider"], '["provider-a"]')
+        self.assertEqual(beta.attrs["data-route"], '{"route": "fictional"}')
+        for key, value in (("provider", alpha.attrs["data-provider"]),
+                           ("route", alpha.attrs["data-route"])):
+            selector = next(node for node in page.descendants("select")
+                            if node.attrs.get("data-comparison-filter") == key)
+            self.assertIn(value, {option.attrs["value"] for option in selector.descendants("option")})
+        passes = [node for node in page.descendants("section")
+                  if "pass" in node.attrs.get("class", "").split()
+                  and node.attrs.get("data-model") == "fixture-a"]
+        self.assertEqual(len(passes), 4)
+        self.assertTrue(all(node.attrs["data-provider"] == alpha.attrs["data-provider"]
+                            and node.attrs["data-route"] == alpha.attrs["data-route"]
+                            and node.attrs["data-effort"] == '{"level": "high"}'
+                            for node in passes))
+        for key in ("provider", "route", "effort"):
+            selector = next(node for node in page.descendants("select")
+                            if node.attrs.get("data-filter") == key)
+            self.assertIn(passes[0].attrs["data-" + key],
+                          {option.attrs["value"] for option in selector.descendants("option")})
+        summary = next(node for node in page.descendants("section")
+                       if "summary-section" in node.attrs.get("class", "").split())
+        self.assertIn("Planned positions: 16", normalized(summary))
+
     def test_explorer_category_uses_adapter_identity_not_model_name(self):
         self.experiment["configs"][0]["model"] = "liquid-sounding-name"
         self.experiment["configs"][0]["settings"]["adapter"] = "openrouter"

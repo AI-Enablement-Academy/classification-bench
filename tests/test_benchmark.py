@@ -73,6 +73,20 @@ class BenchmarkTests(unittest.TestCase):
         evaluated = evaluate(self.task, plan, self.labels, export_predictions(self.config_path))
         self.assertEqual(len(evaluated["conditions"]), 4)
 
+    def test_declared_model_type_runs_with_original_provider_controls(self):
+        original_plan = build_plan(self.task, self.experiment, self.inputs)
+        self.experiment["configs"][0]["model_type"] = "decision"
+        self.write("experiment", self.experiment)
+        previewed = preview(self.config_path)
+        self.assertEqual(previewed["request_count"], 16)
+        self.assertNotEqual(previewed["requests"][0]["request_id"],
+                            original_plan["requests"][0]["request_id"])
+        completed = run(self.config_path)
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["states"], {"response_saved": 16})
+        self.assertEqual(len(export_predictions(self.config_path)["records"]), 16)
+        self.assertEqual(status(self.config_path)["states"], {"response_saved": 16})
+
     def test_ambiguous_first_config_does_not_stop_other_config_or_resend(self):
         first = preview(self.config_path)["requests"][0]["request_id"]
         original = SyntheticAdapter.dispatch

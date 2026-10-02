@@ -61,9 +61,12 @@ def validate_experiment(experiment):
     configs = _list(experiment["configs"], "experiment.configs")
     prompts = _list(experiment["prompts"], "experiment.prompts")
     for config in configs:
-        _object(config, {"id", "model", "settings"}, {"id", "model"}, "config")
+        _object(config, {"id", "model", "model_type", "settings"}, {"id", "model"}, "config")
         _id(config["id"], "config.id")
         _id(config["model"], "config.model")
+        if "model_type" in config and config["model_type"] not in (
+                "llm", "fine_tuned_llm", "decision"):
+            raise ValidationError("config.model_type: expected llm, fine_tuned_llm or decision")
         if "settings" in config and not isinstance(config["settings"], dict):
             raise ValidationError("config.settings: expected object")
         _digest(config)  # reject non-JSON values and NaN

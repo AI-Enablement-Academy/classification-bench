@@ -13,6 +13,8 @@ from classification_bench.benchmark import (_execute_one, _initialize, _load,
                                             export_predictions, preview, report_snapshot, run)
 from classification_bench.evidence import put_artifact, read_artifact
 from classification_bench.manifest import canonical_bytes
+from tests.test_adapters import bound_config
+from tests.test_decision_adapters import fixture as decision_fixture
 
 
 class OtherAdapter:
@@ -84,6 +86,45 @@ class RuntimeTests(unittest.TestCase):
         registry.register("other-runtime", OfflineRuntime(OtherAdapter,
                           identity_status="fixture-observed", zero_charge_source="fixture:zero"))
         self.addCleanup(registry.unregister, "other-runtime")
+
+    def test_declared_model_type_stays_in_plan_but_not_provider_adapter_controls(self):
+        for name, config in (("openrouter", bound_config()),
+                             ("clef", decision_fixture("clef_decide")[0])):
+            with self.subTest(name=name):
+                experiment = json.loads(Path(self.config["experiment"]).read_text())
+                experiment["configs"] = [config]
+                experiment["batch_size"] = 1
+                Path(self.config["experiment"]).write_text(json.dumps(experiment))
+                self.config.update(scope=f"fixture:{name}", cap=1_000_000,
+                                   currency="USD", scale=1_000_000,
+                                   authorization_file=str(self.config_path.parent / "authorization.json"),
+                                   provider_limits={"provider": 1})
+                self.config_path.write_text(json.dumps(self.config))
+                baseline = preview(self.config_path)
+                experiment["configs"][0]["model_type"] = "decision" if name == "clef" else "llm"
+                Path(self.config["experiment"]).write_text(json.dumps(experiment))
+                declared = preview(self.config_path)
+                _, plan, _, materials, offline = _load(self.config_path)
+                self.assertFalse(offline)
+                self.assertEqual(plan["experiment"]["configs"][0]["model_type"],
+                                 experiment["configs"][0]["model_type"])
+                self.assertNotIn("model_type", materials[0]["adapter"].config)
+                self.assertEqual(declared["request_count"], baseline["request_count"])
+                self.assertEqual(declared["requests"][0]["route"], baseline["requests"][0]["route"])
+                self.assertEqual(declared["requests"][0]["reserve_amount"],
+                                 baseline["requests"][0]["reserve_amount"])
+                self.assertNotEqual(declared["plan_sha256"], baseline["plan_sha256"])
+                self.assertNotEqual(declared["run_sha256"], baseline["run_sha256"])
+                self.assertNotEqual(declared["requests"][0]["request_id"],
+                                    baseline["requests"][0]["request_id"])
+
+    def test_collection_adapter_identity_keeps_unsupported_roster(self):
+        experiment = json.loads(Path(self.config["experiment"]).read_text())
+        experiment["configs"][0]["settings"]["adapter"] = ["other-runtime"]
+        Path(self.config["experiment"]).write_text(json.dumps(experiment))
+        result = preview(self.config_path)
+        self.assertEqual(result["request_count"], 1)
+        self.assertIn("unsupported adapter", result["requests"][0]["blocked_reason"])
 
     def test_live_preflight_binds_fresh_catalog_and_canonical_identity_hashes(self):
         adapter = Mock()
