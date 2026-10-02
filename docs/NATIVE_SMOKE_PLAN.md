@@ -7,10 +7,12 @@ This plan prepares separate acceptance scopes for the [native adapters](NATIVE_D
 | Liquid product smoke | `d1:free` | 3 | USD 0.25 | pause | Reviewed free entitlement and source snapshot; authorized Liquid key |
 | Solar product smoke | `solar-decide` | 3 | USD 0.25 | pause | Reviewed free entitlement and source snapshot; authorized Upstage key. Direct metered admission is blocked. |
 | Qwen product smoke | `decision-model-preview` | 3 | USD 0.25 | pause | Reviewed regional/account billing snapshot; workspace ID and region; authorized DashScope key |
-| Cloudflare product smoke | `clef` | 3 | USD 0.25 | pause | Actual account ID, reviewed published-price snapshot and account billing; separately authorized Clef token |
-| Cloudflare Flash product smoke | `clef-flash` | 3 | USD 0.25 | pause | Actual account ID, reviewed published-price snapshot and account billing; separately authorized Clef token |
+| Cloudflare product smoke | `clef` | 3 | USD 0.25 | pause | Account plan/remaining quota review; dedicated authorized Clef token; exact scope approval |
+| Cloudflare Flash product smoke | `clef-flash` | 3 | USD 0.25 | pause | Account plan/remaining quota review; dedicated authorized Clef token; exact scope approval |
 
 These are proposed independent caps, not an approved pooled budget. Each provider/model needs its own reviewed preview and run-bound approval. Previous OpenRouter approvals are completed and cannot fund these calls. Liquid metered admission is also blocked. [Provider contract sources and limits](DECISION_PROVIDER_CONTRACTS.md) and [Clef operation](CLEF_DECISIONS.md) explain the billing boundaries. Both smoke and full caps are operator settings; USD 0.25 is a proposal, not a hardwired requirement.
+
+The [Cloudflare account setup check](CLOUDFLARE_ACCOUNT_SETUP.md) resolved the actual account ID and catalog/schema access. Fresh actual-account smoke/full previews and reviewed public-price snapshots are in `private-data/clef-account-preparation-20261002/`; they create no authorization. Both smoke scopes fit an unused daily free allowance at conservative context bounds, but actual remaining quota and billing status are unverified.
 
 ## Fixed fictional task
 

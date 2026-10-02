@@ -6,7 +6,7 @@ The active release goal is [NEXT_TASK_GOAL.md](NEXT_TASK_GOAL.md). The updated O
 
 Use [implementation status](IMPLEMENTATION_STATUS.md) for final verification counts and limits, and [operator workflow](RUNNER.md) for commands.
 
-The [2026-09-30 independent recheck](OPERATOR_RECHECK_20260930.md) reproduced all three fictional workflows. The [release audit](RELEASE_ACCEPTANCE_AUDIT.md) records the remaining visual gate and the applicability limits of saved live evidence. Separate [native smoke proposals](NATIVE_SMOKE_PLAN.md) are prepared but not authorized.
+The [2026-09-30 independent recheck](OPERATOR_RECHECK_20260930.md) reproduced all three fictional workflows. The [release audit](RELEASE_ACCEPTANCE_AUDIT.md) records the remaining visual gate and the applicability limits of saved live evidence. Separate [native smoke proposals](NATIVE_SMOKE_PLAN.md) are prepared but not authorized. The [Cloudflare account setup check](CLOUDFLARE_ACCOUNT_SETUP.md) now has actual-account previews and successful catalog/schema access; billing status, remaining quota and dedicated token setup are still unresolved. No payment change or inference occurred.
 
 ## Ownership
 
