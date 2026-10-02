@@ -1,14 +1,30 @@
-# Implementation status: 2026-09-30
+# Implementation status: 2026-10-02
 
 The first runner and report are implemented and offline verified. The completed, separately authorized product smoke verified the OpenRouter adapter with three valid responses and independently checked delayed identity metadata; see [live identity results](LIVE_IDENTITY_SMOKE_RESULT.md). The release is not complete: updated report visual/keyboard verification remains pending. The user confirmed report readability and supplied filtering/expansion evidence; independent subagent operator reproduction passed; see [operator results](OPERATOR_CHECK_RESULT.md). The repository is private; the active candidate-experience benchmark was not edited or rerun.
 
-## Current release audit
+## Clef and report explorer extension, 2026-10-02
+
+Native [Cloudflare Clef and Clef-Flash](CLEF_DECISIONS.md) now use the Workers AI typed decision routes, a dedicated credential variable, pinned transport, strict REST-envelope parsing and conservative input-price reservations. Public model documentation was fetched successfully as Markdown through the exact preflight helper; generic JSON fetching returned HTTP 403 and was replaced for these sources. No Cloudflare inference or credential transfer was performed. Hosted billing, independent returned identity and possible near-context state truncation remain acceptance limits; unknown charges stay held.
+
+Four private offline previews in `private-data/clef-preparation-20261002-verified/` cover smoke and full for each model: 3/18 requests and 6/36 field decisions. Reservation sums are 47,187/283,122 microUSD for Clef and 17,697/106,182 for Flash. Example caps are USD 0.25/1.00 with pause; caps and pause/stop remain operator settings. These previews explicitly use placeholder account IDs, bind captured public source bytes and create no authorization. Actual account/billing review and a fresh actual-account preview precede any new authorization.
+
+The [report explorer](REPORT_EXPLORER.md) adds explicit adapter categories, model/provider/route/prompt filtering, two-condition comparison with clear selection controls, native route options before any response, links that reveal hidden evidence, and sticky active section navigation. Whole-experiment totals remain fixed; condition values retain all planned passes. Reduced-motion support disables smooth scrolling and transitions. The candidate-experience presentation was inspected as a read-only source reference, without modifying that project.
+
+The integrated suite passes **194 tests with no skips**, including local jsdom control checks. jsdom executes the generated controls without rendering layout; it does not establish visual, keyboard-focus or narrow-window acceptance. Independent native and report review returned **APPROVE**, after resolving the documentation-fetch, native-filter and hidden-target issues. A pre-existing historical-adapter test now deterministically checks the enrolled-build mismatch and asserts no dispatch, rather than accepting an error that depended on a random artifact shard's existence. Production historical-read behavior was unchanged.
+
+Shared Ruflo retrieval succeeded for `decisions/codebuild/codex-global-memory-20260928`. The verified extension decision and reusable report/native-fetch patterns were saved back; read-only checks found the matching decision content in both canonical databases and the patterns in canonical ReasoningBank. No running session was repointed or restarted.
+
+Fresh product and candidate workflows in `private-data/report-explorer-20261002/` each completed 24 synthetic requests and retained 36 planned positions. Their mode-0600 reports passed JavaScript syntax checks. An additional explicitly unexecuted mixed-roster UI fixture has five configurations and ten comparison rows, with all 90 planned positions missing; it makes no claim about model results. Earlier reports were preserved.
+
+Current read-only export of the saved OpenRouter smoke retained three operations and three predictions with network connections forbidden. All 31 saved file digests stayed unchanged. This extends the historical read check; it does not attest live dispatch of this new build. Latest rendered report acceptance remains pending under the [documented Browser rejection](BROWSER_ACCEPTANCE_20261001.md) and [updated checklist](REPORT_UX_CHECK.md). No workaround was attempted.
+
+## Release audit checkpoint, 2026-09-30
 
 The [requirement-by-requirement audit](RELEASE_ACCEPTANCE_AUDIT.md) separates core release gates from native-provider acceptance. A fresh [independent operator recheck](OPERATOR_RECHECK_20260930.md) reproduced candidate, product and custom workflows at `2d7de1f`: 24/24/16 completed synthetic requests, all 36/36/24 planned positions retained, unchanged artifacts after completed restart/recovery, and six expected overwrite refusals. No provider calls were made. The latest rendered report remains unaccepted.
 
 Saved OpenRouter evidence passes current read-only export and response/metadata parsers: three settled attempts, three dispatch events and USD 0.000174 charged. Adapter and transport source hashes still match; the runtime module changed when native support was added. This establishes historical protocol evidence, not live dispatch of the entire current build. The [native smoke proposals](NATIVE_SMOKE_PLAN.md) require separate billing evidence and authorization.
 
-## Native providers and report extension
+## Native providers and report extension checkpoint, 2026-09-30
 
 The new native adapters cover Liquid `d1:free`, Upstage `solar-decide` and Alibaba `decision-model-preview`. [Provider contracts](DECISION_PROVIDER_CONTRACTS.md) bind the documented native routes. [Native operation](NATIVE_DECISIONS.md) explains the separate keys, reviewed billing evidence, one-record call topology and unresolved-charge holds. No native provider call has been made; provider acceptance and billing evidence remain pending. [OpenAI Decisions](OPENAI_DECISIONS_STATUS.md) is announced but has no verified public contract in this implementation.
 

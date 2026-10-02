@@ -7,7 +7,7 @@ import json
 import re
 import socket
 import time
-from urllib import error
+from urllib import error, request as urlrequest
 
 from .adapters import (AdapterError, ParsedResponse, PreparedRequest, TransportResult,
                        MAX_RESPONSE_BYTES, TIMEOUT_SECONDS, _default_catalog_fetch,
@@ -27,10 +27,44 @@ CONTRACTS = {
                       "billing_url": "https://help.aliyun.com/en/model-studio/decision-model-preview",
                       "credential": "DASHSCOPE_API_KEY", "context": 65536,
                       "max_choices": 255},
+    "clef_decide": {"model": "clef", "provider": "cloudflare",
+                    "billing_url": "https://developers.cloudflare.com/workers-ai/models/clef/",
+                    "credential": "CLOUDFLARE_CLEF_API_TOKEN", "context": 65536,
+                    "max_choices": None, "input_rate": Decimal("0.00000024")},
+    "clef_flash_decide": {"model": "clef-flash", "provider": "cloudflare",
+                          "billing_url": "https://developers.cloudflare.com/workers-ai/models/clef-flash/",
+                          "credential": "CLOUDFLARE_CLEF_API_TOKEN", "context": 65536,
+                          "max_choices": None, "input_rate": Decimal("0.00000009")},
 }
 _REGIONS = {"ap-southeast-1", "cn-beijing"}
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 _WORKSPACE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$")
+_ACCOUNT = re.compile(r"^[a-fA-F0-9]{32}$")
+_QUESTION = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+
+
+class _NoRedirect(urlrequest.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _cloudflare_billing_fetch(url):
+    """Read the public model page as its documented Markdown representation."""
+    if url not in (CONTRACTS["clef_decide"]["billing_url"],
+                   CONTRACTS["clef_flash_decide"]["billing_url"]):
+        raise AdapterError("unapproved Clef billing source")
+    opener = urlrequest.build_opener(urlrequest.ProxyHandler({}), _NoRedirect())
+    req = urlrequest.Request(url, headers={
+        "Accept": "text/markdown",
+        "User-Agent": "classification-bench/1.0 (public-doc-billing-check)",
+    })
+    with opener.open(req, timeout=10) as response:
+        if response.status != 200 or response.headers.get_content_type() != "text/markdown":
+            raise AdapterError("unexpected Clef billing document response")
+        raw = response.read(1_000_001)
+    if len(raw) > 1_000_000:
+        raise AdapterError("Clef billing document exceeds size limit")
+    return raw
 
 
 def _date(value):
@@ -77,6 +111,10 @@ def _snapshot(snapshot, contract):
         raise AdapterError("metered attestation has no billable rate")
     if snapshot["basis"] == "metered" and rates[1] != 0:
         raise AdapterError("provider has no enforceable output-token limit")
+    if contract["provider"] == "cloudflare" and (
+            snapshot["basis"] != "metered" or rates[0] != contract["input_rate"] or
+            rates[1] != 0 or rates[2] != 0):
+        raise AdapterError("Clef billing snapshot must use the published input-only price")
     if snapshot["basis"] == "metered" and contract["provider"] == "upstage":
         raise AdapterError("direct Solar Decide price is not published in the pinned official source")
     if snapshot["basis"] == "metered" and (contract["context"] is None or ceiling != contract["context"]):
@@ -102,6 +140,8 @@ class DecisionAdapter:
         allowed = {"adapter", "billing_snapshot"}
         if self.kind == "qwen_decision":
             allowed |= {"workspace_id", "region"}
+        if self.contract["provider"] == "cloudflare":
+            allowed.add("account_id")
         if set(settings) != allowed:
             raise AdapterError("unsupported or missing decision setting")
         if self.kind == "qwen_decision":
@@ -109,6 +149,12 @@ class DecisionAdapter:
             if not isinstance(workspace, str) or not _WORKSPACE.fullmatch(workspace) or region not in _REGIONS:
                 raise AdapterError("invalid Qwen workspace or region")
             self.endpoint = f"https://{workspace}.{region}.maas.aliyuncs.com/compatible-mode/v1/systemone"
+        elif self.contract["provider"] == "cloudflare":
+            account = settings["account_id"]
+            if not isinstance(account, str) or not _ACCOUNT.fullmatch(account):
+                raise AdapterError("invalid Cloudflare account ID")
+            self.endpoint = (f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/"
+                             f"@cf/cloudflare/{self.contract['model']}")
         else:
             self.endpoint = self.contract["endpoint"]
         self.config = config
@@ -117,7 +163,8 @@ class DecisionAdapter:
         self.snapshot = settings["billing_snapshot"]
         self.rates = _snapshot(self.snapshot, self.contract)
         self.transport = transport or _default_transport
-        self.billing_fetch = billing_fetch or _default_catalog_fetch
+        self.billing_fetch = billing_fetch or (_cloudflare_billing_fetch if self.provider == "cloudflare"
+                                                else _default_catalog_fetch)
         self.now = now or (lambda: datetime.now(timezone.utc))
         self._prepared_bodies = {}
 
@@ -132,8 +179,12 @@ class DecisionAdapter:
         if not isinstance(item.get("id"), str) or not isinstance(item.get("input"), dict):
             raise AdapterError("invalid decision item")
         questions = {}
+        if self.provider == "cloudflare" and len(fields) > 64:
+            raise AdapterError("Clef supports at most 64 questions")
         for field in fields:
             labels = field["labels"]
+            if self.provider == "cloudflare" and not _QUESTION.fullmatch(field["name"]):
+                raise AdapterError("invalid Clef question ID")
             if self.contract["max_choices"] is not None and len(labels) > self.contract["max_choices"]:
                 raise AdapterError("too many native choice options")
             questions[field["name"]] = {"type": "choice", "instructions": prompt["text"],
@@ -149,7 +200,11 @@ class DecisionAdapter:
         input_rate, _, request_rate = self.rates
         # No direct provider exposes a request-level price cap. This is a
         # source-attested reservation, not a provider-enforced or observed fee.
-        amount = (self.snapshot["max_input_tokens"] * input_rate + request_rate) * len(fields)
+        # Clef serves every question in one model context and bills input tokens
+        # for that single invocation. Other direct routes retain their earlier
+        # conservative per-question reservation.
+        multiplier = 1 if self.provider == "cloudflare" else len(fields)
+        amount = (self.snapshot["max_input_tokens"] * input_rate + request_rate) * multiplier
         reserve = max(1, int((amount * 1_000_000).to_integral_value(rounding=ROUND_CEILING)))
         source = "decision:billing:" + hashlib.sha256(_json_bytes(self.snapshot)).hexdigest()
         return PreparedRequest(body, reserve, source,
@@ -204,6 +259,12 @@ class DecisionAdapter:
             return ParsedResponse("invalid", (), None, None, None, None, None, None, "invalid UTF-8 JSON")
         if not isinstance(value, dict):
             return ParsedResponse("invalid", (), None, None, None, None, None, None, "response is not object")
+        if self.provider == "cloudflare":
+            if (value.get("success") is not True or value.get("errors") != [] or
+                    not isinstance(value.get("result"), dict)):
+                return ParsedResponse("invalid", (), None, None, None, None, None, None,
+                                      "Cloudflare REST envelope unsuccessful or missing result")
+            value = value["result"]
         model = value.get("model")
         raw_usage = value.get("usage")
         usage = dict(raw_usage) if isinstance(raw_usage, dict) else {}

@@ -42,6 +42,34 @@ def _table(headers, rows, *, caption=None, row_header=False, numeric_columns=(),
     return f"<table{table_class}>{label}<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
 
+def _adapter_category(settings):
+    """Group only declared adapter identities, never model-name guesses."""
+    adapter = settings.get("adapter")
+    if adapter == "openrouter":
+        return "OpenRouter"
+    if adapter in {"liquid_decide", "solar_decide", "qwen_decision",
+                   "clef_decide", "clef_flash_decide"}:
+        return "Native decisions"
+    if adapter == "synthetic":
+        return "Synthetic"
+    return "Other declared adapter" if adapter else "Adapter unspecified"
+
+
+_NATIVE_PROVIDER = {"liquid_decide": "liquid", "solar_decide": "upstage",
+                    "qwen_decision": "qwen", "clef_decide": "cloudflare",
+                    "clef_flash_decide": "cloudflare"}
+_NATIVE_MODEL = {"liquid_decide": "d1:free", "solar_decide": "solar-decide",
+                 "qwen_decision": "decision-model-preview", "clef_decide": "clef",
+                 "clef_flash_decide": "clef-flash"}
+
+
+def _native_requested_route(config):
+    settings = config.get("settings", {})
+    adapter = settings.get("adapter")
+    provider = _NATIVE_PROVIDER.get(adapter)
+    return f"{provider}:{config['model']}" if provider and config["model"] == _NATIVE_MODEL[adapter] else None
+
+
 def _comparison_table(rows):
     """Keep display text and sort keys separate, especially for rates and gaps."""
     columns = (
@@ -68,15 +96,22 @@ def _comparison_table(rows):
             if index == 0:
                 content = (f"<strong class='model-name'>{_h(entry['model'])}</strong>"
                            f"<span class='model-meta'>{_h(value)} · requested provider: {_h(entry['provider'])}</span>"
-                           f"<span class='quality-note{' has-gaps' if entry['has_gaps'] else ''}'>{_h(entry['status'])}</span>")
+                           f"<span class='model-meta'>{_h(entry['category'])} · route: {_h(entry['route'])}</span>"
+                           f"<span class='quality-note{' has-gaps' if entry['has_gaps'] else ''}'>{_h(entry['status'])}</span>"
+                           f"<span class='row-actions'><label><input type='checkbox' class='compare-select' "
+                           f"aria-label='Compare {_h(entry['model'])}, {_h(entry['config'])}, {_h(entry['prompt'])}'"
+                           f"> Compare</label> <a href='#{_h(entry['anchor'])}'>Inspect condition</a></span>")
                 cells.append(f"<th scope='row'{attrs}>{content}</th>")
             else:
                 cls = " class='numeric'" if index in (2, 3, 4, 5, 6, 8) else ""
                 cells.append(f"<td{cls}{attrs}>{_h(value)}</td>")
-        body.append(f"<tr data-config-id='{_h(entry['config'])}' data-prompt-id='{_h(entry['prompt'])}'>"
+        body.append(f"<tr data-config-id='{_h(entry['config'])}' data-prompt-id='{_h(entry['prompt'])}' "
+                    f"data-prompt='{_h(entry['prompt'])}' "
+                    f"data-category='{_h(entry['category'])}' data-model='{_h(entry['model'])}' "
+                    f"data-provider='{_h(entry['provider'])}' data-route='{_h(entry['route'])}'>"
                     + "".join(cells) + "</tr>")
     return ("<div class='table-scroll' tabindex='0' role='region' aria-label='Configuration comparison table'>"
-            "<table class='comparison-table'><caption>Configuration and prompt comparison (unfiltered)</caption>"
+            "<table class='comparison-table'><caption>Configuration and prompt comparison (all planned passes per condition)</caption>"
             f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>")
 
 
@@ -438,6 +473,15 @@ main{padding-bottom:5rem}.comparison-section{padding:3.5rem 0 3rem}.section-intr
 .filters{padding:1.5rem 0 2rem;border-top:1px solid var(--line)}.filter-grid{display:flex;flex-wrap:wrap;gap:.7rem 1rem;align-items:end}.filter-grid label{font-size:.76rem;font-weight:650;color:var(--muted)}.filter-grid select{display:block;margin-top:.25rem;min-width:7.5rem;max-width:14rem;padding:.45rem;border:1px solid #aeb9af;background:var(--surface);color:var(--ink);font:inherit;font-size:.86rem}.filter-grid button{padding:.46rem .8rem;border:1px solid var(--accent);background:transparent;color:var(--accent);font:inherit;cursor:pointer}.filter-grid button:hover{background:var(--soft)}.filter-grid button:active{transform:translateY(1px)}.filter-grid button,.sort-button,.jump-nav a{transition:background .2s,color .2s,border-color .2s}.status-line{font-size:.8rem;color:var(--muted)}
 details{margin-top:1rem}.raw-usage pre{max-height:24rem;overflow:auto;padding:1rem;background:#f1f2ed;border:1px solid var(--line);font-size:.78rem;white-space:pre-wrap;overflow-wrap:anywhere}summary{cursor:pointer;color:var(--accent);font-weight:650}.notice{border-left:3px solid var(--accent);padding-left:.75rem}.skip-link{position:absolute;left:-10000px}.skip-link:focus{left:1rem;top:1rem;z-index:2;background:var(--surface);padding:.5rem}.pass[hidden],article[hidden],[hidden]{display:none!important}a:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible,.table-scroll:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 @media(max-width:760px){.shell{width:min(100% - 2rem,1360px)}.masthead{padding-top:1.5rem}.summary-section{display:block}.detail-index ul{columns:1}.comparison-section{padding-top:2.5rem}.comparison-table{min-width:930px}}
+.jump-nav{position:sticky;top:0;z-index:2;margin:0;background:rgba(248,247,244,.97);border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}.jump-nav .shell{display:flex;flex-wrap:wrap;gap:.3rem 1.8rem;padding:.8rem 0}.jump-nav a{padding:.35rem 0;border-bottom:2px solid transparent}.jump-nav a[aria-current=location]{color:var(--ink);border-color:var(--accent)}
+.comparison-section,.summary-section,.filters,.provenance,h2[id]{scroll-margin-top:5rem}.category-rail{display:flex;gap:.35rem;overflow-x:auto;border-bottom:1px solid var(--line);padding:1.4rem 0 .6rem}.category-rail button{white-space:nowrap;border:0;border-bottom:2px solid transparent;background:transparent;padding:.6rem .9rem;color:var(--muted);font-family:inherit;font-size:.85rem;font-weight:600;line-height:1.3;cursor:pointer}.category-rail button span{font-variant-numeric:tabular-nums;color:var(--muted);margin-left:.4rem}.category-rail button[aria-pressed=true]{border-color:var(--accent);color:var(--ink)}.category-rail button:hover{background:var(--soft)}
+.comparison-tools{align-items:end;padding:.8rem 0 1rem}.comparison-tools label{display:block;color:var(--muted)}.comparison-tools select{display:block;margin-top:.35rem;min-width:9rem;max-width:14rem;padding:.6rem .75rem;border:1px solid #aeb9af;border-radius:3px;background:var(--surface);color:var(--ink);font:inherit}.comparison-tools button{padding:.6rem .75rem;border:1px solid var(--accent);background:transparent;color:var(--accent);font:inherit;cursor:pointer}.comparison-tools button:hover{background:var(--soft)}
+.row-actions{display:flex;gap:.7rem;align-items:center;flex-wrap:wrap;margin-top:.8rem;font-size:.75rem;font-weight:600}.row-actions label{display:inline-flex;align-items:center;gap:.3rem;cursor:pointer}.row-actions input{accent-color:var(--accent)}.row-actions a{white-space:nowrap}.selection-section{margin-top:1.4rem;padding:1.5rem 0;border-top:1px solid var(--line)}.selection-section h3{margin:.3rem 0}.selection-section .section-intro p{font-size:.84rem;max-width:48ch}.selection-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.selection-card{padding:1.3rem;background:var(--surface);border-top:3px solid var(--accent);min-width:0}.selection-card>p{font-size:.8rem;color:var(--muted);overflow-wrap:anywhere}.selection-card dl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.3rem .8rem;margin:1rem 0 0;font-size:.82rem}.selection-card dt,.selection-card dd{border-top:1px solid var(--line);margin:0;padding:.45rem 0}.selection-card dd{text-align:right;font-variant-numeric:tabular-nums;max-width:22ch}.selection-outside{color:var(--danger)!important;font-weight:650}.compare-select:disabled{cursor:not-allowed}
+.selection-section>button{margin:.2rem 0 1rem;padding:.5rem .75rem;border:1px solid var(--accent);background:transparent;color:var(--accent);font:inherit;cursor:pointer}.selection-section>button:hover:not(:disabled){background:var(--soft)}.selection-section>button:disabled{opacity:.45;cursor:default}
+.category-rail button,.comparison-tools button,.row-actions a,.selection-card,.jump-nav a{transition:background-color .18s ease,color .18s ease,transform .18s ease}.category-rail button:active,.comparison-tools button:active{transform:translateY(1px)}.category-rail button:focus-visible,.comparison-tools button:focus-visible,.row-actions input:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+@media(max-width:760px){.jump-nav .shell{flex-wrap:nowrap;overflow-x:auto}.jump-nav a{white-space:nowrap}.selection-cards{grid-template-columns:1fr}.comparison-tools label{width:calc(50% - .7rem)}.comparison-tools input,.comparison-tools select{width:100%;max-width:none}.selection-card dl{grid-template-columns:minmax(0,1fr) minmax(8rem,auto)}}
+@media(max-width:500px){.comparison-tools label{width:100%}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
 """
 
 
@@ -535,7 +579,10 @@ def generate_report(task, plan, labels, predictions, operations=None):
                         for key in ("provider", "model", "route", "effort")}
             metadata["model"] = metadata["model"] or config["model"]
             for key in ("provider", "route", "effort"):
-                metadata[key] = metadata[key] or settings.get(key) or (settings.get("reasoning") if key == "effort" else None)
+                metadata[key] = metadata[key] or settings.get(key) or (
+                    _NATIVE_PROVIDER.get(settings.get("adapter")) if key == "provider" else
+                    _native_requested_route(config) if key == "route" else
+                    settings.get("reasoning") if key == "effort" else None)
             values = {"task": task["name"], "model": metadata["model"], "provider": metadata["provider"],
                       "effort": metadata["effort"], "prompt": pid, "repeat": str(repeat), "route": metadata["route"]}
             attributes = " ".join(f"data-{key}='{_h(value if value is not None else 'unavailable')}'"
@@ -619,7 +666,11 @@ def generate_report(task, plan, labels, predictions, operations=None):
                     if condition_requests else "0/0 planned requests")
         comparison_rows.append({
             "config": cid, "prompt": pid, "model": config["model"],
-            "provider": settings.get("provider") or ", ".join(sorted({
+            "anchor": condition_anchor, "category": _adapter_category(settings),
+            "route": settings.get("route") or _native_requested_route(config) or ", ".join(sorted({
+                str(op["route"]) for op in condition_ops if op.get("route")
+            })) or "unavailable",
+            "provider": settings.get("provider") or _NATIVE_PROVIDER.get(settings.get("adapter")) or ", ".join(sorted({
                 op["provider"] for op in condition_ops if op.get("provider")
             })) or "provider unavailable",
             "status": (f"{invalid_count + missing_count} selected prediction gap(s)"
@@ -669,6 +720,20 @@ def generate_report(task, plan, labels, predictions, operations=None):
     source_rows = [(name, digest) for name, digest in result["source_hashes"].items()]
     if operations:
         source_rows.append(("supplied operations", _digest(operations)))
+    categories = Counter(row["category"] for row in comparison_rows)
+    category_buttons = "<button type='button' data-category-choice='' aria-pressed='true'>All conditions <span>" + str(len(comparison_rows)) + "</span></button>"
+    category_buttons += "".join(
+        f"<button type='button' data-category-choice='{_h(category)}' aria-pressed='false'>"
+        f"{_h(category)} <span>{count}</span></button>"
+        for category, count in sorted(categories.items()))
+    comparison_filters = []
+    for key, label in (("model", "Model"), ("provider", "Provider"),
+                       ("route", "API route"), ("prompt", "Prompt condition")):
+        values = sorted({str(row[key]) for row in comparison_rows})
+        options = "<option value=''>All</option>" + "".join(
+            f"<option value='{_h(value)}'>{_h(value)}</option>" for value in values)
+        comparison_filters.append(
+            f"<label>{label}<select data-comparison-filter='{key}'>{options}</select></label>")
     script = """const filters = [...document.querySelectorAll('[data-filter]')];
     const passes = [...document.querySelectorAll('.pass')];
     function applyFilters() {
@@ -687,7 +752,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
       filters.forEach(select => { select.value = ''; });
       applyFilters();
     });
-    document.querySelectorAll("[data-contents] a[href^='#']").forEach(link => link.addEventListener('click', () => {
+    document.querySelectorAll("[data-contents] a[href^='#'], .row-actions a[href^='#']").forEach(link => link.addEventListener('click', () => {
       const target = document.getElementById(link.hash.slice(1));
       if (target && (target.hidden || target.closest('article[hidden]'))) {
         filters.forEach(select => { select.value = ''; });
@@ -697,18 +762,90 @@ def generate_report(task, plan, labels, predictions, operations=None):
     const comparisonBody = document.querySelector('.comparison-table tbody');
     const comparisonRows = [...comparisonBody.rows];
     const comparisonSearch = document.getElementById('comparison-search');
+    const comparisonFilters = [...document.querySelectorAll('[data-comparison-filter]')];
+    const categoryButtons = [...document.querySelectorAll('[data-category-choice]')];
+    let activeCategory = '';
     function applyComparisonSearch() {
       const query = comparisonSearch.value.trim().toLocaleLowerCase();
       let visible = 0;
       comparisonRows.forEach(row => {
-        row.hidden = Boolean(query) && !row.textContent.toLocaleLowerCase().includes(query);
+        row.hidden = (Boolean(query) && !row.textContent.toLocaleLowerCase().includes(query)) ||
+          (Boolean(activeCategory) && row.dataset.category !== activeCategory) ||
+          comparisonFilters.some(filter => filter.value && row.dataset[filter.dataset.comparisonFilter] !== filter.value);
         if (!row.hidden) visible += 1;
       });
       document.getElementById('comparison-status').textContent =
-        `Showing ${visible} of ${comparisonRows.length} configurations and prompts.`;
+        `Showing ${visible} of ${comparisonRows.length} configurations and prompts in this comparison view. Whole-experiment totals remain unfiltered.`;
       document.getElementById('comparison-empty').hidden = visible !== 0;
+      renderSelection();
     }
     comparisonSearch.addEventListener('input', applyComparisonSearch);
+    comparisonFilters.forEach(filter => filter.addEventListener('change', applyComparisonSearch));
+    categoryButtons.forEach(button => button.addEventListener('click', () => {
+      activeCategory = button.dataset.categoryChoice;
+      categoryButtons.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+      applyComparisonSearch();
+    }));
+    document.getElementById('reset-comparison').addEventListener('click', () => {
+      activeCategory = '';
+      categoryButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.categoryChoice === '')));
+      comparisonSearch.value = '';
+      comparisonFilters.forEach(filter => { filter.value = ''; });
+      applyComparisonSearch();
+    });
+    const selection = [];
+    const selectionStatus = document.getElementById('selection-status');
+    const selectionCards = document.getElementById('selection-cards');
+    const clearSelection = document.getElementById('clear-selection');
+    function renderSelection() {
+      selectionCards.replaceChildren();
+      const columns = ['Exact agreement', 'Repeat range', 'Invalid selected projections',
+        'No selected prediction', 'Mean client request duration', 'Observed cost', 'Cost coverage'];
+      selection.forEach(row => {
+        const card = document.createElement('section');
+        card.className = 'selection-card';
+        const title = document.createElement('h3');
+        title.textContent = `${row.dataset.model} · ${row.dataset.promptId}`;
+        card.appendChild(title);
+        const meta = document.createElement('p');
+        meta.textContent = `${row.dataset.configId} · ${row.dataset.category} · requested provider: ${row.dataset.provider} · route: ${row.dataset.route}`;
+        card.appendChild(meta);
+        if (row.hidden) {
+          const outside = document.createElement('p');
+          outside.className = 'selection-outside';
+          outside.textContent = 'Outside the current comparison filters';
+          card.appendChild(outside);
+        }
+        const list = document.createElement('dl');
+        columns.forEach((label, index) => {
+          const term = document.createElement('dt');
+          term.textContent = label;
+          const value = document.createElement('dd');
+          value.textContent = row.cells[index + 2].textContent.trim();
+          list.append(term, value);
+        });
+        card.appendChild(list);
+        selectionCards.appendChild(card);
+      });
+      selectionStatus.textContent = selection.length ?
+        `${selection.length} of 2 conditions selected. Each value covers all planned passes for that condition; currencies and routes may differ.` :
+        'Select up to two conditions from the table to compare their recorded values.';
+      clearSelection.disabled = selection.length === 0;
+      comparisonRows.forEach(row => {
+        const checkbox = row.querySelector('.compare-select');
+        checkbox.disabled = selection.length === 2 && !checkbox.checked;
+      });
+    }
+    comparisonRows.forEach(row => row.querySelector('.compare-select').addEventListener('change', event => {
+      if (event.target.checked) selection.push(row);
+      else selection.splice(selection.indexOf(row), 1);
+      renderSelection();
+    }));
+    clearSelection.addEventListener('click', () => {
+      selection.length = 0;
+      comparisonRows.forEach(row => { row.querySelector('.compare-select').checked = false; });
+      renderSelection();
+    });
     document.querySelectorAll('[data-sort]').forEach(button => button.addEventListener('click', () => {
       const index = button.closest('th').cellIndex;
       const heading = button.closest('th');
@@ -726,6 +863,33 @@ def generate_report(task, plan, labels, predictions, operations=None):
       });
       ordered.forEach(item => comparisonBody.appendChild(item.row));
     }));
+    const sectionLinks = [...document.querySelectorAll('.jump-nav a')];
+    function setActiveSection(id) {
+      if (!sectionLinks.some(link => link.hash.slice(1) === id)) return;
+      sectionLinks.forEach(link => {
+        if (link.hash.slice(1) === id) link.setAttribute('aria-current', 'location');
+        else link.removeAttribute('aria-current');
+      });
+    }
+    sectionLinks.forEach(link => link.addEventListener('click', () => setActiveSection(link.hash.slice(1))));
+    function setActiveFromHash() { setActiveSection(window.location.hash.slice(1)); }
+    window.addEventListener('hashchange', setActiveFromHash);
+    setActiveSection('comparison-heading');
+    setActiveFromHash();
+    if ('IntersectionObserver' in window) {
+      const observed = sectionLinks.map(link => ({
+        id: link.hash.slice(1),
+        node: document.getElementById(link.hash.slice(1)).closest('section, footer')
+      }));
+      const ids = new Map(observed.map(item => [item.node, item.id]));
+      const observer = new IntersectionObserver(entries => {
+        const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (!visible.length) return;
+        setActiveSection(ids.get(visible[0].target));
+      }, {rootMargin: '-10% 0px -65% 0px'});
+      observed.forEach(item => observer.observe(item.node));
+    }
+    applyComparisonSearch();
     applyFilters();"""
     comparison = _comparison_table(comparison_rows)
     synthetic_notice = ("<p class='notice'>Contains synthetic results: SYN units are local accounting, not provider charges.</p>"
@@ -744,20 +908,29 @@ def generate_report(task, plan, labels, predictions, operations=None):
             f"<div><span class='meta-label'>Configurations</span><span class='meta-value'>{len(configs)}</span></div>"
             f"<div><span class='meta-label'>Prompts</span><span class='meta-value'>{len(prompts)}</span></div>"
             f"<div><span class='meta-label'>Passes per condition</span><span class='meta-value'>{plan['experiment']['repeats']}</span></div>"
-            "<div><span class='meta-label'>Evidence</span><span class='meta-value'>Local source digests</span></div></div>"
-            "<nav class='jump-nav' aria-label='Report sections'><a href='#comparison-heading'>Comparison</a>"
+            "<div><span class='meta-label'>Evidence</span><span class='meta-value'>Local source digests</span></div></div></div></header>"
+            "<nav class='jump-nav' aria-label='Report sections'><div class='shell'><a href='#comparison-heading'>Comparison</a>"
             "<a href='#summary-heading'>Whole experiment</a><a href='#detail-heading'>Pass evidence</a>"
-            "<a href='#provenance-heading'>Provenance</a></nav></div></header>"
+            "<a href='#provenance-heading'>Provenance</a></div></nav>"
             "<main id='main-content' class='shell'>"
             "<section class='comparison-section' aria-labelledby='comparison-heading'><div class='section-intro'>"
             "<div><span class='eyebrow'>01 / Compare</span><h2 id='comparison-heading'>Compare configurations and prompts</h2>"
             "<p>Exact agreement uses every planned position. Missing and invalid predictions earn no credit.</p></div></div>"
+            "<nav class='category-rail' aria-label='Declared adapter categories'>" + category_buttons + "</nav>"
             "<div class='comparison-tools'><label for='comparison-search'>Search model, configuration or prompt"
             "<input id='comparison-search' type='search' autocomplete='off'></label>"
-            "<small>Use column headings to sort. Unavailable measurements sort last.</small></div>"
+            + " ".join(comparison_filters) +
+            "<button type='button' id='reset-comparison'>Reset comparison view</button></div>"
+            "<p class='status-line'>Categories use declared adapter identities. Use column headings to sort; unavailable measurements sort last.</p>"
             + comparison +
-            f"<p class='status-line' id='comparison-status' role='status' aria-live='polite'>Showing {len(comparison_rows)} of {len(comparison_rows)} configurations and prompts.</p>"
-            "<p id='comparison-empty' hidden>No configurations or prompts match this search.</p>"
+            f"<p class='status-line' id='comparison-status' role='status' aria-live='polite'>Showing {len(comparison_rows)} of {len(comparison_rows)} configurations and prompts in this comparison view. Whole-experiment totals remain unfiltered.</p>"
+            "<p id='comparison-empty' hidden>No conditions match these comparison filters. Reset the comparison view to show all conditions.</p>"
+            "<section class='selection-section' aria-labelledby='selection-heading'><div class='section-intro'>"
+            "<div><span class='eyebrow'>Selected conditions</span><h3 id='selection-heading'>Compare two conditions</h3></div>"
+            "<p>Values cover all planned passes for each selected condition. Compare costs only within the same currency and route context.</p></div>"
+            "<p id='selection-status' role='status' aria-live='polite'>Select up to two conditions from the table to compare their recorded values.</p>"
+            "<button type='button' id='clear-selection' disabled>Clear selections</button>"
+            "<div id='selection-cards' class='selection-cards'></div></section>"
             "<p class='status-line'>Observed cost totals include recorded charges only; coverage is shown against planned requests. Estimates remain in request details.</p></section>"
             "<section class='summary-section' aria-labelledby='summary-heading'><div>"
             "<span class='eyebrow'>02 / Scope</span><h2 id='summary-heading'>Whole experiment summary (unfiltered)</h2>"
@@ -798,6 +971,10 @@ def _filter_values(key, plan, operations):
     for config in plan["experiment"]["configs"]:
         settings = config.get("settings", {})
         value = config["model"] if key == "model" else settings.get(key)
+        if key == "provider" and value is None:
+            value = _NATIVE_PROVIDER.get(settings.get("adapter"))
+        if key == "route" and value is None:
+            value = _native_requested_route(config)
         if key == "effort" and value is None:
             value = settings.get("reasoning")
         values.add(value or "unavailable")

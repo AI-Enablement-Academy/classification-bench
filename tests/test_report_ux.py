@@ -152,7 +152,7 @@ class ReportUxTests(unittest.TestCase):
                   if "comparison-table" in table.attrs.get("class", "").split()]
         self.assertEqual(len(tables), 1)
         self.assertEqual(normalized(next(tables[0].descendants("caption"))),
-                         "Configuration and prompt comparison (unfiltered)")
+                         "Configuration and prompt comparison (all planned passes per condition)")
         header, rows = comparison_rows(tables[0])
         self.assertEqual(header[:6], ["Configuration", "Prompt", "Exact agreement",
                                       "Repeat range", "Invalid selected projections",
@@ -356,6 +356,77 @@ class ReportUxTests(unittest.TestCase):
         self.assertNotIn("cost", sort_keys)
         self.assertEqual(len([node for node in page.descendants("input")
                               if node.attrs.get("id") == "comparison-search"]), 1)
+
+    def test_explorer_categories_filters_selection_and_scoped_counts(self):
+        page = self.render()
+        category_buttons = [node for node in page.descendants("button")
+                            if "data-category-choice" in node.attrs]
+        self.assertEqual([(node.attrs["data-category-choice"], normalized(node))
+                          for node in category_buttons],
+                         [("", "All conditions 4"), ("Adapter unspecified", "Adapter unspecified 4")])
+        self.assertEqual(category_buttons[0].attrs["aria-pressed"], "true")
+        controls = [node for node in page.descendants("select")
+                    if "data-comparison-filter" in node.attrs]
+        self.assertEqual({node.attrs["data-comparison-filter"] for node in controls},
+                         {"model", "provider", "route", "prompt"})
+        table = next(node for node in page.descendants("table")
+                     if node.attrs.get("class") == "comparison-table")
+        rows = [node for node in table.descendants("tr") if "data-config-id" in node.attrs]
+        self.assertEqual(len(rows), 4)
+        for row in rows:
+            self.assertEqual(row.attrs["data-category"], "Adapter unspecified")
+            self.assertEqual(len([node for node in row.descendants("input")
+                                  if "compare-select" in node.attrs.get("class", "").split()]), 1)
+            links = [node for node in row.descendants("a") if node.attrs.get("href", "").startswith("#")]
+            self.assertEqual(len(links), 1)
+        selection = next(node for node in page.descendants()
+                         if node.attrs.get("id") == "selection-cards")
+        self.assertEqual(selection.attrs["class"], "selection-cards")
+        clear = next(node for node in page.descendants("button")
+                     if node.attrs.get("id") == "clear-selection")
+        self.assertIn("disabled", clear.attrs)
+        self.assertIn("Whole-experiment totals remain unfiltered",
+                      normalized(next(node for node in page.descendants()
+                                      if node.attrs.get("id") == "comparison-status")))
+        nav = next(node for node in page.descendants("nav")
+                   if node.attrs.get("class") == "jump-nav")
+        self.assertEqual(len(list(nav.descendants("a"))), 4)
+
+    def test_explorer_category_uses_adapter_identity_not_model_name(self):
+        self.experiment["configs"][0]["model"] = "liquid-sounding-name"
+        self.experiment["configs"][0]["settings"]["adapter"] = "openrouter"
+        self.experiment["configs"][1]["model"] = "clef-flash"
+        self.experiment["configs"][1]["settings"]["adapter"] = "clef_flash_decide"
+        self.experiment["configs"][1]["settings"].pop("provider")
+        self.experiment["configs"][1]["settings"].pop("route")
+        old_requests = self.plan["requests"]
+        self.plan = build_plan(self.task, self.experiment, self.inputs)
+        replacements = {old["request_id"]: new["request_id"]
+                        for old, new in zip(old_requests, self.plan["requests"])}
+        for operation in self.operations:
+            operation["request_id"] = replacements[operation["request_id"]]
+        page = self.render()
+        rows = [node for node in page.descendants("tr") if "data-config-id" in node.attrs]
+        by_config = {node.attrs["data-config-id"]: node.attrs["data-category"] for node in rows}
+        self.assertEqual(by_config, {"alpha": "OpenRouter", "beta": "Native decisions"})
+        self.assertTrue(all(node.attrs["data-provider"] == "cloudflare"
+                            for node in rows if node.attrs["data-config-id"] == "beta"))
+        self.assertTrue(all(node.attrs["data-route"] == "cloudflare:clef-flash"
+                            for node in rows if node.attrs["data-config-id"] == "beta"))
+        passes = [node for node in page.descendants("section")
+                  if "pass" in node.attrs.get("class", "").split()
+                  and node.attrs.get("data-provider") == "cloudflare"]
+        self.assertEqual(len(passes), 4)
+        self.assertTrue(all(node.attrs["data-route"] == "cloudflare:clef-flash"
+                            for node in passes))
+        provider_filter = next(node for node in page.descendants("select")
+                               if node.attrs.get("data-filter") == "provider")
+        route_filter = next(node for node in page.descendants("select")
+                            if node.attrs.get("data-filter") == "route")
+        self.assertIn("cloudflare", {option.attrs["value"]
+                                     for option in provider_filter.descendants("option")})
+        self.assertIn("cloudflare:clef-flash", {option.attrs["value"]
+                                               for option in route_filter.descendants("option")})
 
     def test_saved_raw_usage_is_collapsed_and_escaped_per_request(self):
         self.operations[0]["usage"] = {

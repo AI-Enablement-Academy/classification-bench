@@ -11,7 +11,7 @@ from classification_bench.adapter_runtime import OfflineRuntime, OpenRouterRunti
 from classification_bench.adapters import ParsedResponse, PreparedRequest, TransportResult
 from classification_bench.benchmark import (_execute_one, _initialize, _load,
                                             export_predictions, preview, report_snapshot, run)
-from classification_bench.evidence import read_artifact
+from classification_bench.evidence import put_artifact, read_artifact
 from classification_bench.manifest import canonical_bytes
 
 
@@ -127,8 +127,16 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(operation["parsed_status"], "valid")
         self.assertEqual(operation["route"], "fixture:legacy-route")
         self.assertEqual(operation["adapter_source_sha256"], "a" * 64)
-        with self.assertRaisesRegex(ValueError, "artifact store directory is missing|frozen request bytes changed|enrolled evidence changed"):
-            run(self.config_path)
+        # Publish the current candidate without changing the enrolled identity.
+        # Otherwise the rejection message depends on whether its random SHA
+        # shard already exists, before the enrollment guard can be exercised.
+        current_ref = put_artifact(config["artifacts"], material["manifest"],
+                                   "application/json")
+        self.assertNotEqual(current_ref.sha256, refs["manifest_ref"].sha256)
+        with patch.object(OtherAdapter, "dispatch") as dispatch:
+            with self.assertRaisesRegex(ValueError, "enrolled evidence changed"):
+                run(self.config_path)
+            dispatch.assert_not_called()
         self.assertEqual(read_artifact(config["artifacts"], refs["manifest_ref"]),
                          canonical_bytes(old_manifest))
 

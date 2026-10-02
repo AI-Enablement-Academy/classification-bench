@@ -1,12 +1,14 @@
 # Native decision adapters
 
-Liquid d1, Upstage Solar Decide and Alibaba Qwen decision-model-preview use native categorical requests through the existing matrix runner. Provider contracts and source links are recorded in [decision provider contracts](DECISION_PROVIDER_CONTRACTS.md). OpenAI's announced API is [pending a verified public contract](OPENAI_DECISIONS_STATUS.md).
+Liquid d1, Upstage Solar Decide, Alibaba Qwen decision-model-preview and Cloudflare Clef/Clef-Flash use native categorical requests through the existing matrix runner. Provider contracts and source links are recorded in [decision provider contracts](DECISION_PROVIDER_CONTRACTS.md) and [Clef operation](CLEF_DECISIONS.md). OpenAI's announced API is [pending a verified public contract](OPENAI_DECISIONS_STATUS.md).
 
 | Adapter setting | Model | Credential environment variable |
 | --- | --- | --- |
 | `liquid_decide` | `d1:free` | `LIQUID_API_KEY` |
 | `solar_decide` | `solar-decide` | `UPSTAGE_API_KEY` |
 | `qwen_decision` | `decision-model-preview` | `DASHSCOPE_API_KEY` |
+| `clef_decide` | `clef` | `CLOUDFLARE_CLEF_API_TOKEN` |
+| `clef_flash_decide` | `clef-flash` | `CLOUDFLARE_CLEF_API_TOKEN` |
 
 Each request contains one input record. Each categorical output field becomes one typed choice question. The state preserves the record, each question uses the original prompt as its instructions, and the task's labels supply the option IDs and descriptions. Existing task files have no separate label-description field; these adapters do not invent definitions. Put the reviewed classification rubric in the prompt. Reference answers remain outside the inference capsule.
 
@@ -18,7 +20,7 @@ These implementations have offline tests. They have not been verified with live 
 
 Run preparation requires an operator-reviewed billing snapshot. The snapshot binds a provider source URL and its raw-byte SHA-256, observation and expiry timestamps, a conservative input allowance, rates, and a per-request fee. Retain the raw source bytes alongside the reviewed snapshot so the billing assertion can be audited later. Preflight requires the bound source to remain unchanged and the review to remain current. A matching page hash proves that the page bytes are unchanged; it does not prove that the operator extracted the right rate or that their account has that price.
 
-The documented direct routes provide no enforceable output-token cap. Nonzero output pricing is therefore unsupported. Metered Liquid and Solar remain blocked: the reviewed direct-route documentation does not establish the required price evidence, and Liquid also lacks a published context cap. Metered Qwen requires the full published context allowance per question plus the request fee, conservatively multiplied by the number of questions. Free-route admission is an explicit operator attestation; the source hash alone does not establish an account entitlement. Missing billing evidence is a blocker, not an invitation to copy the price of a different model or serving route. In particular, an OpenRouter Solar price does not establish a direct Upstage price.
+The documented direct routes provide no enforceable output-token cap. Nonzero output pricing is therefore unsupported. Metered Liquid and Solar remain blocked: the reviewed direct-route documentation does not establish the required price evidence, and Liquid also lacks a published context cap. Metered Qwen requires the full published context allowance per question plus the request fee, conservatively multiplied by the number of questions. Clef reserves one full shared context at its published input-only price and retains unknown actual charges as holds; see [its contract and Markdown source capture](CLEF_DECISIONS.md). Free-route admission is an explicit operator attestation; the source hash alone does not establish an account entitlement. Missing billing evidence is a blocker, not an invitation to copy the price of a different model or serving route. In particular, an OpenRouter Solar price does not establish a direct Upstage price.
 
 The snapshot has these fields:
 
@@ -27,7 +29,7 @@ The snapshot has these fields:
 | `source_url` | Allowed official provider billing evidence URL |
 | `response_sha256` | SHA-256 of the exact source response bytes |
 | `observed_at`, `valid_until` | UTC timestamps bounding the operator's review |
-| `max_input_tokens` | Input allowance per question; metered routes require the full published context cap |
+| `max_input_tokens` | Full published context cap for metered routes; applied per question for Qwen, once for Clef's shared context |
 | `input_usd_per_token` | Reviewed USD input rate as a decimal string |
 | `output_usd_per_token` | Must be the reviewed zero output rate |
 | `request_usd` | Reviewed request fee as a decimal string |

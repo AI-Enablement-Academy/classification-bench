@@ -240,5 +240,6 @@ class DecisionRuntime:
         return None
 
 
-for _decision_kind in ("liquid_decide", "solar_decide", "qwen_decision"):
+for _decision_kind in ("liquid_decide", "solar_decide", "qwen_decision",
+                       "clef_decide", "clef_flash_decide"):
     registry.register(_decision_kind, DecisionRuntime(_decision_kind))

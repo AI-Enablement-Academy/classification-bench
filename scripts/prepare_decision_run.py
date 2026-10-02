@@ -10,6 +10,8 @@ MODELS = {
     'liquid_decide': ('d1:free', 'liquid'),
     'solar_decide': ('solar-decide', 'upstage'),
     'qwen_decision': ('decision-model-preview', 'qwen'),
+    'clef_decide': ('clef', 'cloudflare'),
+    'clef_flash_decide': ('clef-flash', 'cloudflare'),
 }
 
 
@@ -25,17 +27,25 @@ def main(argv=None):
     parser.add_argument('--on-budget-exhausted', choices=('pause', 'stop'), default='pause')
     parser.add_argument('--workspace-id')
     parser.add_argument('--region', choices=('cn-beijing', 'ap-southeast-1'))
+    parser.add_argument('--account-id', help='Cloudflare Workers AI account ID for Clef')
     args = parser.parse_args(argv)
     if args.adapter == 'qwen_decision':
         if not args.workspace_id or not args.region:
             parser.error('Qwen requires --workspace-id and --region')
     elif args.workspace_id or args.region:
         parser.error('Workspace and region apply only to Qwen')
+    if args.adapter in ('clef_decide', 'clef_flash_decide'):
+        if not args.account_id:
+            parser.error('Clef requires --account-id')
+    elif args.account_id:
+        parser.error('Account ID applies only to Clef')
     billing = json.loads(Path(args.billing_snapshot).read_text())
     model, provider = MODELS[args.adapter]
     settings = {'adapter': args.adapter, 'billing_snapshot': billing}
     if args.adapter == 'qwen_decision':
         settings.update(workspace_id=args.workspace_id, region=args.region)
+    if args.adapter in ('clef_decide', 'clef_flash_decide'):
+        settings['account_id'] = args.account_id
     target = Path(args.directory).resolve()
     target.mkdir(mode=0o700, parents=True, exist_ok=False)
     fixture = Path(__file__).resolve().parents[1] / 'examples' / args.task

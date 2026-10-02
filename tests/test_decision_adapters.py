@@ -15,16 +15,21 @@ PAGE = b"reviewed-offline-provider-page"
 
 def fixture(kind="liquid_decide", *, basis="free"):
     contract = CONTRACTS[kind]
+    if contract["provider"] == "cloudflare":
+        basis = "metered"
     snapshot = {"source_url": contract["billing_url"],
                 "response_sha256": hashlib.sha256(PAGE).hexdigest(),
                 "observed_at": "2026-09-29T12:00:00Z",
                 "valid_until": "2026-10-01T12:00:00Z",
                 "max_input_tokens": contract["context"] or 16384,
-                "input_usd_per_token": "0" if basis == "free" else "0.000001",
+                "input_usd_per_token": (str(contract["input_rate"]) if contract["provider"] == "cloudflare"
+                                         else "0" if basis == "free" else "0.000001"),
                 "output_usd_per_token": "0", "request_usd": "0", "basis": basis}
     settings = {"adapter": kind, "billing_snapshot": snapshot}
     if kind == "qwen_decision":
         settings.update(workspace_id="ws-123", region="ap-southeast-1")
+    if contract["provider"] == "cloudflare":
+        settings["account_id"] = "a" * 32
     config = {"id": "c", "model": contract["model"], "settings": settings}
     plan = {"task": {"name": "classify", "fields": [
         {"name": "category", "labels": ["yes", "no"]},
@@ -45,6 +50,8 @@ def response(kind="liquid_decide", *, answers=None):
              "usage": {"input_tokens": 53, "output_tokens": 0}}
     if kind == "qwen_decision":
         value["request_id"] = "provider-request-1"
+    if CONTRACTS[kind]["provider"] == "cloudflare":
+        value = {"result": value, "success": True, "errors": [], "messages": []}
     return TransportResult(json.dumps(value).encode(), 200, 4)
 
 
@@ -75,7 +82,8 @@ class DecisionAdapterTests(unittest.TestCase):
                 self.assertEqual(body["questions"]["category"]["criteria"],
                                  {"yes": "yes", "no": "no"})
                 self.assertEqual(prepared.expected_ids, ("row-1",))
-                self.assertEqual(prepared.reserve_microusd, 1)
+                self.assertEqual(prepared.reserve_microusd,
+                                 15729 if kind == "clef_decide" else 5899 if kind == "clef_flash_decide" else 1)
                 self.assertEqual(adapter.verify_live_snapshot()["billing_response_sha256"],
                                  hashlib.sha256(PAGE).hexdigest())
                 request["items"].append({"id": "row-2", "input": {"text": "bye"}})
@@ -132,6 +140,61 @@ class DecisionAdapterTests(unittest.TestCase):
             adapter = DecisionAdapter(config, now=lambda: clock, billing_fetch=lambda url: page)
             with self.assertRaisesRegex(AdapterError, reason):
                 adapter.verify_live_snapshot()
+
+    def test_clef_exact_rates_account_and_rest_envelope(self):
+        for kind, reserve in (("clef_decide", 15729), ("clef_flash_decide", 5899)):
+            with self.subTest(kind=kind):
+                adapter, prepared, config, _, _, _ = self.adapter(kind)
+                self.assertEqual(prepared.reserve_microusd, reserve)
+                self.assertIn("/ai/run/@cf/cloudflare/", adapter.endpoint)
+                valid = adapter.parse(response(kind), expected_request_id=prepared.request_id,
+                                      expected_ids=prepared.expected_ids, expected_model=adapter.model)
+                self.assertEqual(valid.status, "valid")
+                self.assertEqual(valid.usage["decision_answers"]["category"]["confidence"], 0.6)
+                self.assertIsNone(valid.observed_cost_microusd)
+                failed = json.loads(response(kind).raw_bytes)
+                failed["success"] = False
+                invalid = adapter.parse(TransportResult(json.dumps(failed).encode(), 200, 1),
+                                        expected_request_id=prepared.request_id,
+                                        expected_ids=prepared.expected_ids, expected_model=adapter.model)
+                self.assertEqual(invalid.status, "invalid")
+                failed["success"] = True
+                failed["errors"] = [{"code": 1, "message": "provider error"}]
+                errors = adapter.parse(TransportResult(json.dumps(failed).encode(), 200, 1),
+                                       expected_request_id=prepared.request_id,
+                                       expected_ids=prepared.expected_ids, expected_model=adapter.model)
+                self.assertEqual(errors.status, "invalid")
+                failed["errors"] = []
+                failed["result"]["model"] = "other-model"
+                mismatch = adapter.parse(TransportResult(json.dumps(failed).encode(), 200, 1),
+                                         expected_request_id=prepared.request_id,
+                                         expected_ids=prepared.expected_ids, expected_model=adapter.model)
+                self.assertEqual(mismatch.status, "invalid")
+                self.assertIn("model mismatch", mismatch.reason)
+                failed["result"]["model"] = adapter.model
+                failed["result"].pop("usage")
+                no_usage = adapter.parse(TransportResult(json.dumps(failed).encode(), 200, 1),
+                                         expected_request_id=prepared.request_id,
+                                         expected_ids=prepared.expected_ids, expected_model=adapter.model)
+                self.assertEqual(no_usage.status, "valid")
+                self.assertIsNone(no_usage.observed_cost_microusd)
+                config["settings"]["billing_snapshot"]["input_usd_per_token"] = "0.00000001"
+                with self.assertRaisesRegex(AdapterError, "published input-only price"):
+                    DecisionAdapter(config)
+                config["settings"]["account_id"] = "../escape"
+                with self.assertRaisesRegex(AdapterError, "invalid Cloudflare account ID"):
+                    DecisionAdapter(config)
+
+    def test_clef_question_contract_rejects_unsafe_ids_and_overflow(self):
+        config, plan, request, prompt = fixture("clef_decide")
+        adapter = DecisionAdapter(config)
+        plan["task"]["fields"][0]["name"] = "bad/question"
+        with self.assertRaisesRegex(AdapterError, "question ID"):
+            adapter.prepare(plan, request, prompt)
+        plan["task"]["fields"] = [{"name": f"field_{i}", "labels": ["a", "b"]}
+                                    for i in range(65)]
+        with self.assertRaisesRegex(AdapterError, "at most 64 questions"):
+            adapter.prepare(plan, request, prompt)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Implementation handoff
 
-Current working increment: 2026-09-30 in `/Users/adamkovacs/Documents/codebuild/classification-bench`. The private repository is `AI-Enablement-Academy/classification-bench`. The generic runner and report are implemented. Native Liquid, Solar and Qwen categorical adapters and a comparator-first report are the current extension; see [native operation](NATIVE_DECISIONS.md) and [report redesign](REPORT_REDESIGN.md). [OpenAI Decisions](OPENAI_DECISIONS_STATUS.md) is pending a public contract.
+Current working increment: 2026-10-02 in `/Users/adamkovacs/Documents/codebuild/classification-bench`. The private repository is `AI-Enablement-Academy/classification-bench`. The generic runner and report are implemented. Native Liquid, Solar, Qwen and Cloudflare Clef/Clef-Flash categorical adapters and a report explorer are the current extension; see [native operation](NATIVE_DECISIONS.md), [Clef operation](CLEF_DECISIONS.md) and [report explorer](REPORT_EXPLORER.md). [OpenAI Decisions](OPENAI_DECISIONS_STATUS.md) is pending a public contract.
 
 The active release goal is [NEXT_TASK_GOAL.md](NEXT_TASK_GOAL.md). The updated OpenRouter identity path has [three-request live evidence](LIVE_IDENTITY_SMOKE_RESULT.md). Direct visual/keyboard verification of the changed report and live acceptance for the new native providers remain pending. Earlier user readability acceptance applies to the earlier report. No new provider calls are authorized or scheduled. The active candidate-experience benchmark remains separate.
 

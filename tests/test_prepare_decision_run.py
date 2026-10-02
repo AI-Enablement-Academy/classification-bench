@@ -64,3 +64,37 @@ class PrepareDecisionTests(unittest.TestCase):
             timeout=30)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Qwen requires', result.stderr)
+
+    def test_clef_preparation_is_offline_and_keeps_separate_model_prices(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for kind, model, rate, bound in (
+                    ('clef_decide', 'clef', '0.00000024', 15729),
+                    ('clef_flash_decide', 'clef-flash', '0.00000009', 5899)):
+                with self.subTest(kind=kind):
+                    snapshot = Path(tmp) / f'{kind}-billing.json'
+                    snapshot.write_text(json.dumps({
+                        'source_url': f'https://developers.cloudflare.com/workers-ai/models/{model}/',
+                        'response_sha256': 'a' * 64,
+                        'observed_at': '2026-10-02T00:00:00Z',
+                        'valid_until': '2026-10-03T00:00:00Z',
+                        'max_input_tokens': 65536,
+                        'input_usd_per_token': rate, 'output_usd_per_token': '0',
+                        'request_usd': '0', 'basis': 'metered'}))
+                    directory = Path(tmp) / kind
+                    result = subprocess.run([
+                        sys.executable, '-m', 'scripts.prepare_decision_run',
+                        '--directory', str(directory), '--adapter', kind,
+                        '--account-id', 'a' * 32, '--billing-snapshot', str(snapshot),
+                        '--mode', 'smoke', '--budget-usd', '0.25',
+                        '--on-budget-exhausted', 'pause'],
+                        cwd=ROOT, capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    output = json.loads(result.stdout)
+                    self.assertEqual(output['request_count'], 3)
+                    self.assertEqual(output['model_calls'], 0)
+                    self.assertEqual(output['sum_request_bounds_micro_usd'], 3 * bound)
+                    self.assertFalse((directory / 'authorization.json').exists())
+                    self.assertFalse((directory / 'run.sqlite').exists())
+                    config = json.loads((directory / 'experiment.json').read_text())
+                    self.assertEqual(config['configs'][0]['model'], model)
+                    self.assertEqual(config['configs'][0]['settings']['account_id'], 'a' * 32)

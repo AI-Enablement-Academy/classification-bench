@@ -82,6 +82,13 @@ elif kind == 'qwen_decision':
     if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9-]{0,62}', workspace) or region not in ('ap-southeast-1', 'cn-beijing'):
         raise ValueError('invalid Qwen route')
     endpoint = f'https://{workspace}.{region}.maas.aliyuncs.com/compatible-mode/v1/systemone'
+elif kind in ('clef_decide', 'clef_flash_decide'):
+    import re
+    account = capsule['account_id']
+    if not isinstance(account, str) or not re.fullmatch(r'[a-fA-F0-9]{32}', account):
+        raise ValueError('invalid Cloudflare account ID')
+    model = 'clef' if kind == 'clef_decide' else 'clef-flash'
+    endpoint = f'https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/@cf/cloudflare/{model}'
 else:
     raise ValueError('unsupported native adapter')
 body = base64.b64decode(capsule['body'], validate=True)
@@ -124,6 +131,8 @@ def isolated_decision_dispatch(adapter, prepared, api_key, *, worker=None):
     if adapter.kind == "qwen_decision":
         capsule["workspace_id"] = adapter.config["settings"]["workspace_id"]
         capsule["region"] = adapter.config["settings"]["region"]
+    if adapter.kind in ("clef_decide", "clef_flash_decide"):
+        capsule["account_id"] = adapter.config["settings"]["account_id"]
     worker = worker or DecisionNetworkWorker()
     with tempfile.TemporaryDirectory(prefix="classification-decision-call-", dir="/private/tmp") as temp:
         path = Path(temp) / "capsule.json"

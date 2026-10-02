@@ -7,8 +7,10 @@ This plan prepares separate acceptance scopes for the [native adapters](NATIVE_D
 | Liquid product smoke | `d1:free` | 3 | USD 0.25 | pause | Reviewed free entitlement and source snapshot; authorized Liquid key |
 | Solar product smoke | `solar-decide` | 3 | USD 0.25 | pause | Reviewed free entitlement and source snapshot; authorized Upstage key. Direct metered admission is blocked. |
 | Qwen product smoke | `decision-model-preview` | 3 | USD 0.25 | pause | Reviewed regional/account billing snapshot; workspace ID and region; authorized DashScope key |
+| Cloudflare product smoke | `clef` | 3 | USD 0.25 | pause | Actual account ID, reviewed published-price snapshot and account billing; separately authorized Clef token |
+| Cloudflare Flash product smoke | `clef-flash` | 3 | USD 0.25 | pause | Actual account ID, reviewed published-price snapshot and account billing; separately authorized Clef token |
 
-These are proposed independent caps, not an approved USD 0.75 pooled budget. Each provider needs its own reviewed preview and run-bound approval. Previous OpenRouter approvals are completed and cannot fund these calls. Liquid metered admission is also blocked. [Provider contract sources and limits](DECISION_PROVIDER_CONTRACTS.md) explain the billing gaps.
+These are proposed independent caps, not an approved pooled budget. Each provider/model needs its own reviewed preview and run-bound approval. Previous OpenRouter approvals are completed and cannot fund these calls. Liquid metered admission is also blocked. [Provider contract sources and limits](DECISION_PROVIDER_CONTRACTS.md) and [Clef operation](CLEF_DECISIONS.md) explain the billing boundaries. Both smoke and full caps are operator settings; USD 0.25 is a proposal, not a hardwired requirement.
 
 ## Fixed fictional task
 
@@ -27,7 +29,7 @@ Reference labels are read only during offline evaluation, where their digest is 
 ## Before requesting execution approval
 
 1. Establish actual route/account billing evidence. Retain the source bytes and create the reviewed snapshot described in [native operation](NATIVE_DECISIONS.md). Do not manufacture a free entitlement from a model name or page hash.
-2. Run `python3 -m scripts.prepare_decision_run` with the selected adapter, `--task product --mode smoke --budget-usd 0.25 --on-budget-exhausted pause`, the reviewed billing snapshot and a fresh private directory. Qwen additionally needs its actual workspace ID and region. This step performs no inference and creates no authorization.
+2. Run `python3 -m scripts.prepare_decision_run` with the selected adapter, `--task product --mode smoke --budget-usd 0.25 --on-budget-exhausted pause`, the reviewed billing snapshot and a fresh private directory. Qwen additionally needs its actual workspace ID and region; Clef needs its actual `--account-id`. This step performs no inference and creates no authorization. An offline placeholder account preview is a software check and must be replaced with an actual-account preview before authorization.
 3. Inspect the resulting preview: exactly three requests, declared route/model, frozen task and prompt, per-request bounds and their total, and no unexplained blockers. If the proposed cap cannot cover the conservative bounds, revise the proposal before approval. Never silently raise it.
 4. Present that exact preview, provider, task, three-attempt scope, total cap and credential source for explicit authorization. No authorization is currently requested because the provider-specific prerequisites above remain unresolved.
 

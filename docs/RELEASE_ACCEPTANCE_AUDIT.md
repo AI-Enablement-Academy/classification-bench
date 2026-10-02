@@ -1,5 +1,7 @@
 # Release acceptance audit: 2026-09-30
 
+The dated table below preserves the earlier checkpoint. The [2026-10-02 extension status](IMPLEMENTATION_STATUS.md) supersedes its native-provider and report descriptions: Clef/Clef-Flash support and the report explorer are implemented, 194 offline tests pass, and new private fixture reports were generated. Independent review returned APPROVE after resolving confirmed blockers. Saved OpenRouter read/export still preserves three operations, three predictions and all 31 archive-file digests with network connections forbidden. Native live acceptance and latest rendered acceptance remain pending; these are not closed by offline DOM tests. No new inference, credential transfer or publication occurred.
+
 The [current goal](NEXT_TASK_GOAL.md) requires an independently reproducible generic workflow, safe failure/recovery behavior, applicable OpenRouter live evidence, and acceptance of the latest rendered report. **The core release remains pending the changed report's visual and interaction check.** Native-provider live acceptance is tracked separately.
 
 This bounded audit reviewed code at `2d7de1fa119bd2d64583a0bbbad51912fdb894d3`, tests, contracts and saved evidence. Documentation changes do not alter that implementation checkpoint. The preserved integrated suite passed **186 tests in 47.157 seconds, with no skips**; see [implementation status](IMPLEMENTATION_STATUS.md). No new inference, credential read, source-project change, publication or browser workaround was performed.

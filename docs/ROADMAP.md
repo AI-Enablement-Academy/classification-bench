@@ -2,6 +2,10 @@
 
 The separate implementation task starts from [HANDOFF.md](HANDOFF.md) and [NEXT_TASK_GOAL.md](NEXT_TASK_GOAL.md). Operational requirements from the case study are recorded in [BENCHMARK_LESSONS.md](BENCHMARK_LESSONS.md).
 
+## Added: Cloudflare decision models and report explorer
+
+The [Clef and Clef-Flash adapters](CLEF_DECISIONS.md) use native Workers AI typed decisions, a dedicated token, reviewed published-price evidence and operator-selected caps. Their live acceptance remains separate and unperformed. The [report explorer](REPORT_EXPLORER.md) adds declared-adapter categories, model/provider/route/prompt filtering, selected comparisons and sticky section navigation with reduced-motion support. The active candidate-experience project's presentation was a read-only source reference; no inputs, runs or budgets were imported. Latest rendered acceptance remains pending the [visual checklist](REPORT_UX_CHECK.md).
+
 ## Completed: offline foundation
 
 Task contracts, matrix planning, request IDs, strict categorical evaluation, full-denominator metrics, repeat stability, synthetic fixtures and tests. No real model requests or new benchmark data.

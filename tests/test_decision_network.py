@@ -62,10 +62,13 @@ def untrusted_adapter(kind="liquid_decide", *, workspace="example", region="ap-s
     adapter = object.__new__(DecisionAdapter)
     adapter.kind = kind
     adapter.provider = {"liquid_decide": "liquid", "solar_decide": "upstage",
-                        "qwen_decision": "qwen"}[kind]
+                        "qwen_decision": "qwen", "clef_decide": "cloudflare",
+                        "clef_flash_decide": "cloudflare"}[kind]
     adapter.model = {"liquid_decide": "d1:free", "solar_decide": "solar-decide",
-                     "qwen_decision": "decision-model-preview"}[kind]
-    adapter.config = {"settings": {"workspace_id": workspace, "region": region}}
+                     "qwen_decision": "decision-model-preview", "clef_decide": "clef",
+                     "clef_flash_decide": "clef-flash"}[kind]
+    adapter.config = {"settings": {"workspace_id": workspace, "region": region,
+                                   "account_id": "a" * 32}}
     return adapter
 
 
@@ -105,6 +108,10 @@ class DecisionNetworkTests(unittest.TestCase):
             ("solar_decide", {}, "https://api.upstage.ai/v1/systemone"),
             ("qwen_decision", {"workspace_id": "example", "region": "ap-southeast-1"},
              "https://example.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/systemone"),
+            ("clef_decide", {"account_id": "a" * 32},
+             f"https://api.cloudflare.com/client/v4/accounts/{'a' * 32}/ai/run/@cf/cloudflare/clef"),
+            ("clef_flash_decide", {"account_id": "a" * 32},
+             f"https://api.cloudflare.com/client/v4/accounts/{'a' * 32}/ai/run/@cf/cloudflare/clef-flash"),
         )
         for kind, extra, endpoint in routes:
             with self.subTest(kind=kind):
@@ -169,6 +176,13 @@ class DecisionNetworkTests(unittest.TestCase):
                     run_child(capsule("qwen_decision", workspace_id=workspace,
                                       region="ap-southeast-1"), opener)
                 self.assertEqual(opener.calls, [])
+
+    def test_clef_route_rejects_invalid_account_before_transport(self):
+        for account in ("bad/path", "a" * 31, "a" * 32 + ".example"):
+            opener = FakeOpener(Response(b"{}"))
+            with self.assertRaisesRegex(ValueError, "invalid Cloudflare account ID"):
+                run_child(capsule("clef_decide", account_id=account), opener)
+            self.assertEqual(opener.calls, [])
 
     def test_parent_rejects_route_mismatch_before_worker(self):
         adapter = untrusted_adapter()

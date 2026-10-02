@@ -117,4 +117,4 @@ Do not enable shell tracing while loading credentials. Never put a key in comman
 
 ## Native decision models
 
-Use [native decision operation](NATIVE_DECISIONS.md) for Liquid d1, Upstage Solar Decide and Alibaba Qwen decision-model-preview. Each route has its own credential variable and reviewed billing snapshot, while sharing the same preview, authorization, budget, recovery and report commands. These adapters are offline-tested; live provider acceptance remains pending. OpenAI Decisions remains [pending its public API contract](OPENAI_DECISIONS_STATUS.md).
+Use [native decision operation](NATIVE_DECISIONS.md) for Liquid d1, Upstage Solar Decide and Alibaba Qwen decision-model-preview, and [Clef operation](CLEF_DECISIONS.md) for Cloudflare Clef and Clef-Flash. Each provider has its own credential variable and reviewed billing snapshot, while sharing the same preview, authorization, budget, recovery and report commands. These adapters are offline-tested; live provider acceptance remains pending. OpenAI Decisions remains [pending its public API contract](OPENAI_DECISIONS_STATUS.md).

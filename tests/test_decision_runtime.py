@@ -23,6 +23,8 @@ class DecisionRuntimeTests(unittest.TestCase):
                 'fields': [{'name': 'kind', 'labels': ['a', 'b']}]}
         configs = []
         for kind, contract in CONTRACTS.items():
+            if contract['provider'] == 'cloudflare':
+                continue
             settings = {'adapter': kind, 'billing_snapshot': {
                 'source_url': contract['billing_url'], 'response_sha256': 'a' * 64,
                 'observed_at': '2026-09-30T00:00:00Z',
@@ -155,3 +157,43 @@ class DecisionRuntimeTests(unittest.TestCase):
             with patch.dict(os.environ, {'OPENROUTER_API_KEY': 'wrong-provider-fixture'}, clear=True):
                 with self.assertRaisesRegex(ValueError, contract['credential']):
                     runtime.credential(None)
+
+    def test_clef_routes_run_from_successful_rest_envelopes(self):
+        configs = []
+        for kind in ('clef_decide', 'clef_flash_decide'):
+            contract = CONTRACTS[kind]
+            configs.append({'id': kind, 'model': contract['model'], 'settings': {
+                'adapter': kind, 'account_id': 'a' * 32,
+                'billing_snapshot': {
+                    'source_url': contract['billing_url'], 'response_sha256': 'a' * 64,
+                    'observed_at': '2026-09-30T00:00:00Z',
+                    'valid_until': '2026-10-01T00:00:00Z',
+                    'max_input_tokens': 65536,
+                    'input_usd_per_token': str(contract['input_rate']),
+                    'output_usd_per_token': '0', 'request_usd': '0',
+                    'basis': 'metered'}}})
+        experiment = json.loads((self.root/'experiment.json').read_text())
+        experiment['configs'] = configs
+        (self.root/'experiment.json').write_text(json.dumps(experiment))
+        self.config['cap'] = 30000
+        self.authorize_fixture()
+        def cloudflare_response(adapter, prepared, api_key, *, worker):
+            self.calls.append(prepared.request_id)
+            self.assertEqual(api_key, 'clef-fixture-only')
+            answers = {'kind': {'type': 'choice', 'choice': 'a',
+                                'probabilities': {'a': 0.75, 'b': 0.25},
+                                'confidence': 0.6}}
+            return TransportResult(canonical_bytes({
+                'success': True, 'errors': [], 'messages': [],
+                'result': {'model': adapter.model, 'answers': answers,
+                           'usage': {'input_tokens': 17, 'output_tokens': 0}}}), 200, 5)
+        self.dispatch.side_effect = cloudflare_response
+        with patch.dict(os.environ, {'CLOUDFLARE_CLEF_API_TOKEN': 'clef-fixture-only'}):
+            result = run(self.path, worker=self.worker)
+        self.assertEqual(result['states'], {'response_saved': 2})
+        self.assertEqual(result['parsed_statuses'], {'valid': 2})
+        self.assertEqual(result['budget']['unknown_holds'], 21628)
+        operations = report_snapshot(self.path)['operations']
+        self.assertEqual(sorted(op['unresolved_hold_micro_usd'] for op in operations),
+                         [5899, 15729])
+        self.assertEqual(len(self.calls), 2)
