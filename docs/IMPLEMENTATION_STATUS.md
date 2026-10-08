@@ -1,4 +1,15 @@
-# Implementation status: 2026-10-02
+# Implementation status: 2026-10-08
+## Generic task and subscription foundation, 2026-10-08
+
+The [expanded goal](NEXT_TASK_GOAL.md) is active. Its [source-pinned parity matrix](FEATURE_PARITY.md) covers 59 requirements against candidate-experience-benchmark commit `6243eb3`. The earlier visual-only completion scope is superseded.
+
+Implemented this increment: private JSON/JSONL/CSV task initialization/import/validation with frozen source bytes and separated references; Claude Code/Codex runtime adapters; read-only preflight; request-count accounting with unknown dollar cost; and persistent scope admission blocks for observed quota, paid-overage or isolation failures. See [task setup](TASK_SETUP.md) and [subscription operation](SUBSCRIPTION_RUNNER.md). Two unrelated imported tasks completed synthetic run/export/evaluation, and the documented operator example ran successfully. Partial and absent references are imported honestly, but corresponding evaluation/report support remains pending.
+
+The final command `python3 -m unittest discover -s tests -v` passed **272 tests in 26.104 seconds, no skips**, exit 0. Independent bounded reviews returned **APPROVE** after correcting interrupted CLI output classification. New coverage includes real SQLite admission/block races, real macOS reference/symlink/environment probes, both CLI matrix routes with fake transports, no-dispatch preflight, quota/overage halts, and recovery without duplicate dispatch. The full log was inspected at `/tmp/classification-bench-foundation-final-20261008.log`.
+
+Read-only installed CLI authentication checks succeeded; no model inference was dispatched. These checks do not establish model availability, actual extra-usage-off status, live acceptance, rendered report acceptance or full feature parity. The next increment is optional/partial-reference evaluation, followed by the report analyses and interactions listed in the parity matrix. Existing provider evidence and budgets were preserved.
+
+## Earlier release evidence
 
 The first runner and report are implemented and offline verified. The completed, separately authorized product smoke verified the OpenRouter adapter with three valid responses and independently checked delayed identity metadata; see [live identity results](LIVE_IDENTITY_SMOKE_RESULT.md). The release is not complete: updated report visual/keyboard verification remains pending. The user confirmed report readability and supplied filtering/expansion evidence; independent subagent operator reproduction passed; see [operator results](OPERATOR_CHECK_RESULT.md). The repository is private; the active candidate-experience benchmark was not edited or rerun.
 

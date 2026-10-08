@@ -1,6 +1,6 @@
 # Working on classification-bench
 
-Use deterministic code for counting, hashing, scoring and scheduling. Use Sol medium for implementation, Sol high for architecture/review, Luna low for routine inventories. No max/ultra by default. Delegate bounded independent tasks with explicit ownership.
+Use deterministic code for counting, hashing, scoring and scheduling. Use GPT-6.1 Sol with xhigh reasoning for most substantial implementation, integration, debugging and review tasks. Use lower-cost models and lower effort for routine inventories and straightforward work. Escalate to a stronger model only for a concrete unresolved problem and explain why. Set model and effort explicitly for each subagent; report unavailable combinations. Delegate bounded independent work aggressively with explicit file ownership, acceptance criteria and independent review. Prefer deterministic scripts for routine verification. See docs/NEXT_TASK_GOAL.md for the complete active goal.
 
 Keep references out of planning and future inference capsules. The offline evaluator can read them. Do not claim process isolation unless enforced and tested. Preserve missing/invalid outcomes in the full denominator. Keep repeat, retry, replay and prompt condition distinct.
 

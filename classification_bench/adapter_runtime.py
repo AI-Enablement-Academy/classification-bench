@@ -243,3 +243,63 @@ class DecisionRuntime:
 for _decision_kind in ("liquid_decide", "solar_decide", "qwen_decision",
                        "clef_decide", "clef_flash_decide"):
     registry.register(_decision_kind, DecisionRuntime(_decision_kind))
+
+
+class SubscriptionRuntime:
+    """Account-backed CLI execution budgets dispatches, not provider dollars."""
+
+    offline = False
+    accounting_currency = "REQ"
+
+    def __init__(self, kind):
+        self.kind = kind
+
+    def create_adapter(self, config):
+        from .subscription_adapters import SubscriptionAdapter
+        if config.get("settings", {}).get("adapter") != self.kind:
+            raise AdapterError("subscription adapter kind mismatch")
+        return SubscriptionAdapter(config)
+
+    def credential(self, supplied):
+        if supplied is not None:
+            raise ValueError("subscription execution uses existing CLI account authentication, not an API key")
+        return None
+
+    def source_digests(self, adapter):
+        from . import adapters, isolation, subscription_adapters
+        sources = [Path(module.__file__).read_bytes()
+                   for module in (adapters, subscription_adapters)]
+        return {"adapter_source_sha256": digest(b"".join(
+                    len(raw).to_bytes(8, "big") + raw for raw in sources)),
+                "runtime_source_sha256": _module_digest(self),
+                "transport_source_sha256": digest(b"".join(
+                    len(raw).to_bytes(8, "big") + raw for raw in
+                    (Path(module.__file__).read_bytes() for module in
+                     (subscription_adapters, isolation))))}
+
+    def preflight(self, adapter, prepared, worker):
+        from .manifest import canonical_bytes
+        proof = adapter.preflight(worker=worker)
+        return f"{prepared.bound_source}:preflight:{digest(canonical_bytes(proof))}"
+
+    def dispatch(self, adapter, prepared, api_key, worker):
+        return adapter.dispatch(prepared, worker=worker)
+
+    def parse(self, adapter, result, *, expected_request_id, expected_ids, expected_model):
+        return adapter.parse(result, expected_request_id=expected_request_id,
+                             expected_ids=expected_ids, expected_model=expected_model)
+
+    def supplement(self, adapter, parsed, api_key, worker, artifact_root, config):
+        evidence = (parsed.usage or {}).get("subscription")
+        identity = (evidence or {}).get("identity_status", "unavailable")
+        return Supplement(parsed, f"{identity};provider-unverified", evidence)
+
+    def recovery_identity_status(self):
+        return "CLI-saved-evidence;provider-unverified"
+
+    def zero_charge_evidence(self, observation):
+        return None
+
+
+for _subscription_kind in ("claude_code", "codex"):
+    registry.register(_subscription_kind, SubscriptionRuntime(_subscription_kind))

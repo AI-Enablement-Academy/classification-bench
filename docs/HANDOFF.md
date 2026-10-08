@@ -1,5 +1,11 @@
 # Implementation handoff
 
+## Active expansion: 2026-10-08
+
+The user activated a broader [goal](NEXT_TASK_GOAL.md): user-owned task import, account-backed Claude Code/Codex execution, and functional evaluation/report parity with the pinned candidate-experience demo. The earlier final-visual-check goal is superseded. The source remains read-only and separate. GPT-6.1 Sol at xhigh is the default for substantial implementation subagents; [AGENTS.md](../AGENTS.md) now records that policy.
+
+The unchanged baseline passed 203 offline tests on 2026-10-08. Current work adds task import/validation and subscription adapter contracts, with request-count capacity separate from dollar accounting. The integrated checkpoint passed 272 offline tests in 26.104 seconds with no skips, and independent review returned APPROVE. Neither live subscription acceptance nor the broader goal is complete. See [subscription accounting](SUBSCRIPTION_RUNNER.md) and the [feature-parity matrix](FEATURE_PARITY.md). Continue missing evaluation/report functionality after this foundation; do not stop at the earlier release's visual gate.
+
 Current working increment: 2026-10-02 in `/Users/adamkovacs/Documents/codebuild/classification-bench`. The private repository is `AI-Enablement-Academy/classification-bench`. The generic runner and report are implemented. Native Liquid, Solar, Qwen and Cloudflare Clef/Clef-Flash categorical adapters and a report explorer are the current extension; see [native operation](NATIVE_DECISIONS.md), [Clef operation](CLEF_DECISIONS.md) and [report explorer](REPORT_EXPLORER.md). [OpenAI Decisions](OPENAI_DECISIONS_STATUS.md) is pending a public contract.
 
 The active release goal is [NEXT_TASK_GOAL.md](NEXT_TASK_GOAL.md). The updated OpenRouter identity path has [three-request live evidence](LIVE_IDENTITY_SMOKE_RESULT.md). Direct visual/keyboard verification of the changed report remains pending. Earlier user readability acceptance applies to the earlier report. On 2026-10-02 the user authorized this project's smoke tests and runs up to USD 10 total. The prepared Clef/Flash smoke and full scopes receive separate run-bound allocations totaling USD 2.50, with pause and retained unknown-cost holds. The active candidate-experience benchmark remains separate.

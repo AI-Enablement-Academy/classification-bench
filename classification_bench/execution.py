@@ -44,6 +44,48 @@ class ExecutionLedger:
                 reconciliation_outcome TEXT,
                 reconciliation_response_digest TEXT
             )""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS execution_admission_blocks (
+                scope TEXT PRIMARY KEY REFERENCES scopes(scope),
+                reason TEXT NOT NULL,
+                evidence_id TEXT NOT NULL,
+                blocked_at REAL NOT NULL
+            )""")
+            conn.execute("""CREATE TRIGGER IF NOT EXISTS execution_admission_blocks_no_update
+                BEFORE UPDATE ON execution_admission_blocks BEGIN
+                SELECT RAISE(ABORT, 'admission blocks are immutable'); END""")
+            conn.execute("""CREATE TRIGGER IF NOT EXISTS execution_admission_blocks_no_delete
+                BEFORE DELETE ON execution_admission_blocks BEGIN
+                SELECT RAISE(ABORT, 'admission blocks are immutable'); END""")
+
+    @staticmethod
+    def _admission_block_in(conn, scope):
+        row = conn.execute("SELECT * FROM execution_admission_blocks WHERE scope=?", (scope,)).fetchone()
+        return dict(row) if row is not None else None
+
+    def block_scope(self, scope, reason, evidence_id):
+        """Permanently stop new admissions, retaining the first audited finding.
+
+        This shares admission's IMMEDIATE transaction boundary. Existing grants
+        may still complete or reconcile and all measured charges remain payable.
+        """
+        _text(scope, "scope")
+        _text(reason, "reason")
+        _text(evidence_id, "evidence_id")
+        with self.coordinator._transaction() as conn:
+            self.budget._scope(conn, scope)
+            existing = self._admission_block_in(conn, scope)
+            if existing is not None:
+                return existing
+            conn.execute("""INSERT INTO execution_admission_blocks(scope,reason,evidence_id,blocked_at)
+                VALUES (?,?,?,?)""", (scope, reason, evidence_id, time.time()))
+            return self._admission_block_in(conn, scope)
+
+    def admission_block(self, scope):
+        """Read the durable first block for an existing scope, or None."""
+        _text(scope, "scope")
+        with self.coordinator._transaction() as conn:
+            self.budget._scope(conn, scope)
+            return self._admission_block_in(conn, scope)
 
     @staticmethod
     def _entry(conn, request_id):
@@ -124,6 +166,10 @@ class ExecutionLedger:
             if (entry["scope"], entry["manifest_digest"], entry["input_digest"], entry["attempt_id"]) != (
                     scope, manifest_digest, input_digest, row["attempt_id"]):
                 raise ExecutionError("scope or frozen request evidence does not match enrollment")
+            block = self._admission_block_in(conn, scope)
+            if block is not None:
+                raise ExecutionError(f"admission blocked for scope {scope}: {block['reason']} "
+                                     f"(evidence {block['evidence_id']})")
             balance = self.budget._reserve_in(conn, scope, row["attempt_id"], reserve_amount,
                                               bound_source=bound_source, no_fee_evidence=no_fee_evidence)
             conn.execute("""UPDATE execution_requests SET state='admitted',admission_token=?,

@@ -208,9 +208,16 @@ def _load(config_path, adapter=None):
         if (config["authorization_file"] is not None or config["currency"] != "SYN" or
                 config["scale"] != 1 or not config["scope"].startswith("synthetic:")):
             raise BenchmarkError("synthetic runs require a synthetic scope and currency")
-    elif (config["currency"] != "USD" or config["scale"] != 1_000_000 or
-          config["authorization_file"] is None):
-        raise BenchmarkError("live runs require USD micro-units and an authorization file")
+    else:
+        currencies = {getattr(item, "accounting_currency", "USD")
+                      for item in runtimes.values() if not item.offline}
+        if len(currencies) != 1:
+            raise BenchmarkError("different accounting units require separate run scopes")
+        currency = currencies.pop()
+        scale = {"USD": 1_000_000, "REQ": 1}.get(currency)
+        if (scale is None or config["currency"] != currency or
+                config["scale"] != scale or config["authorization_file"] is None):
+            raise BenchmarkError(f"live runs require {currency} units at scale {scale} and an authorization file")
     binding = digest(canonical_bytes({"config": config, "config_bytes_sha256": digest(config_bytes),
                                       "task_sha256": digest(task_bytes),
                                       "experiment_sha256": digest(experiment_bytes),
@@ -228,6 +235,9 @@ def _load(config_path, adapter=None):
         if (type(prepared.reserve_microusd) is not int or prepared.reserve_microusd <
                 (0 if isinstance(current_adapter, UnsupportedAdapter) else 1)):
             raise BenchmarkError("adapter supplied an invalid per-request bound")
+        if (config["currency"] == "REQ" and not isinstance(current_adapter, UnsupportedAdapter)
+                and prepared.reserve_microusd != 1):
+            raise BenchmarkError("request-count admission must reserve exactly one request")
         source_digests = current_runtime.source_digests(current_adapter)
         manifest = canonical_bytes({"schema_version": 1, "request_id": request["request_id"],
                                     "plan_sha256": digest(canonical_bytes(plan)),
@@ -245,6 +255,37 @@ def _load(config_path, adapter=None):
                           "config": cfg, "scope": config["scope"],
                           "fields": plan["task"]["fields"]})
     return config, plan, binding, materials, offline
+
+
+def preflight(config_path, *, adapter=None, api_key=None, worker=None):
+    """Check credentials, runtime controls and isolation without admitting work."""
+    _, _, binding, materials, _ = _load(config_path, adapter)
+    checks = []
+    seen = set()
+    for material in materials:
+        config_id = material["request"]["config_id"]
+        if config_id in seen:
+            continue
+        seen.add(config_id)
+        runtime = material["runtime"]
+        if isinstance(material["adapter"], UnsupportedAdapter):
+            checks.append({"config_id": config_id, "ready": False,
+                           "reason": material["adapter"].reason})
+            continue
+        try:
+            stage = "authentication"
+            runtime.credential(api_key)
+            stage = "runtime, provider controls and isolation"
+            source = runtime.preflight(material["adapter"], material["prepared"], worker)
+            checks.append({"config_id": config_id, "ready": True, "evidence": source})
+        except Exception as exc:
+            # Runtime exception text may include account/credential details.
+            checks.append({"config_id": config_id, "ready": False,
+                           "error_type": type(exc).__name__, "failed_check": stage,
+                           "next_action": "Verify the declared account/credential, runtime version, provider controls and host isolation prerequisites. No work was admitted."})
+    return {"run_sha256": binding, "dispatch_count": 0,
+            "ready": all(check["ready"] for check in checks), "checks": checks,
+            "scope": "read-only checks; does not authorize execution or reserve capacity"}
 
 
 def preview(config_path, *, adapter=None):
@@ -521,6 +562,25 @@ def _validate_task_predictions(parsed, material):
     return parsed
 
 
+def _record_subscription_block(verified, material, observation):
+    if getattr(material["runtime"], "accounting_currency", "USD") != "REQ" or not observation:
+        return
+    parsed = observation["parsed"]
+    evidence = (parsed.get("usage") or {}).get("subscription") or {}
+    reason = None
+    if evidence.get("overage_observed"):
+        reason = "subscription paid extra usage observed"
+    elif evidence.get("quota_exhausted"):
+        reason = "subscription quota exhausted"
+    elif parsed.get("reason") in (
+            "CLI context, tool or authentication isolation violation",
+            "CLI tool isolation violation", "returned model mismatch"):
+        reason = parsed["reason"]
+    if reason:
+        verified.execution.block_scope(material["scope"], reason,
+                                       observation["response_sha256"])
+
+
 def _execute_one(config, material, verified, claim, refs, api_key, worker):
     request = material["request"]
     request_id = request["request_id"]
@@ -546,8 +606,10 @@ def _execute_one(config, material, verified, claim, refs, api_key, worker):
         raw_ref = put_artifact(verified.artifact_root, result.raw_bytes, "application/json")
         read_artifact(verified.artifact_root, raw_ref)
         _save_transport(verified, request_id, result)
+        source = (f"{prepared.route}:cli-receipt" if config["currency"] == "REQ"
+                  else f"{prepared.route}:http:{result.http_status}")
         saved = verified.save_response(request_id, token, result.raw_bytes,
-                                       "application/json", f"{prepared.route}:http:{result.http_status}")
+                                       "application/json", source)
         if saved["response_ref"] != raw_ref:
             raise BenchmarkError("published response changed between transport and receipt")
         # Original bounded response is now durable; only then parse it.
@@ -570,9 +632,14 @@ def _execute_one(config, material, verified, claim, refs, api_key, worker):
                     "generation_response_sha256": supplement.generation_response_sha256}
         metadata["transport"]["raw_bytes"] = None
         _save_observation(verified, request_id, saved["response_ref"].sha256, metadata)
+        _record_subscription_block(verified, material, metadata)
         zero_evidence = (runtime.zero_charge_evidence(metadata)
                          if parsed.observed_cost_microusd == 0 else None)
-        if parsed.observed_cost_microusd is None or (
+        if config["currency"] == "REQ":
+            # This settles consumed dispatch capacity, never a provider USD charge.
+            verified.recover_response(request_id, token, receipt_ref=saved["receipt_ref"],
+                                      settlement_id=f"request:{request_id}", charge=1)
+        elif parsed.observed_cost_microusd is None or (
                 parsed.observed_cost_microusd == 0 and zero_evidence is None):
             verified.recover_response(request_id, token, receipt_ref=saved["receipt_ref"],
                                       billing_reason="provider charge unavailable")
@@ -629,13 +696,17 @@ def _recover_one(verified, material, *, max_objects):
                        "provider_identity_status": material["runtime"].recovery_identity_status()}
             _save_observation(verified, request_id, response_ref.sha256, payload)
             observation = payload
+    _record_subscription_block(verified, material, observation)
     if row["state"] == "outcome_unknown":
         verified.recover_response(request_id, token, receipt_ref=receipt)
     else:
         charge = observation["parsed"]["observed_cost_microusd"] if observation else None
         zero_evidence = (material["runtime"].zero_charge_evidence(observation)
                          if charge == 0 else None)
-        if charge is None or (charge == 0 and zero_evidence is None):
+        if getattr(material["runtime"], "accounting_currency", "USD") == "REQ":
+            verified.recover_response(request_id, token, receipt_ref=receipt,
+                                      settlement_id=f"request:{request_id}", charge=1)
+        elif charge is None or (charge == 0 and zero_evidence is None):
             verified.recover_response(request_id, token, receipt_ref=receipt,
                                       billing_reason="recovered receipt; charge unavailable")
         else:
@@ -668,6 +739,9 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
             except ValueError as exc:
                 raise BenchmarkError(str(exc)) from exc
     verified = _initialize(config, binding, materials)
+    for material in materials:
+        _record_subscription_block(verified, material,
+                                   _observation(verified, material["request"]["request_id"]))
     if _control(verified) != "running":
         result = status(config_path, adapter=adapter)
         result["errors"] = []
@@ -691,6 +765,8 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
         return value
 
     def next_material(config_id):
+        if verified.execution.admission_block(config["scope"]):
+            return None
         for material in by_config[config_id]:
             if isinstance(material["adapter"], UnsupportedAdapter):
                 return None
@@ -716,6 +792,11 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
     worker_count = min(config["max_concurrency"], len(by_config))
     with ThreadPoolExecutor(max_workers=worker_count) as pool:
         while True:
+            if verified.execution.admission_block(config["scope"]):
+                for _, claim in held_claims.values():
+                    _release_claim(verified, claim)
+                held_claims.clear()
+                pending = {config_id: None for config_id in pending}
             for request_id, (selected, claim) in list(held_claims.items()):
                 if len(future_info) >= worker_count:
                     break
@@ -818,6 +899,7 @@ def status(config_path, *, adapter=None):
     config, plan, binding, materials, _ = _load(config_path, adapter)
     parsed = []
     preflight = {}
+    admission_block = None
     if not Path(config["database"]).exists():
         states = ["never_sent"] * len(materials)
         budget = None
@@ -826,6 +908,7 @@ def status(config_path, *, adapter=None):
         verified = VerifiedExecution(config["database"], config["artifacts"])
         _bind(verified, binding)
         control = _control(verified)
+        admission_block = verified.execution.admission_block(config["scope"])
         states = []
         for material in materials:
             try:
@@ -851,7 +934,8 @@ def status(config_path, *, adapter=None):
         (budget["frozen"] or budget["remaining"] < material["prepared"].reserve_microusd)
         for state, material in zip(states, materials))
     completed = sum(state in ("response_saved", "not_sent", "reconciled") for state in states)
-    run_status = ("stopped_budget" if control == "stopped_budget" else
+    run_status = ("blocked_safety" if admission_block else
+                  "stopped_budget" if control == "stopped_budget" else
                   "paused_budget" if control == "paused_budget" else
                   "completed" if completed == len(states) else
                   "recovery_required" if any(x in ("dispatch_intent", "outcome_unknown") for x in states)
@@ -864,7 +948,9 @@ def status(config_path, *, adapter=None):
         if state in ("dispatch_intent", "outcome_unknown"):
             reason = "dispatch may have started; recovery evidence required"
         elif state in ("ready", "claimed", "never_sent"):
-            if isinstance(material["adapter"], UnsupportedAdapter):
+            if admission_block:
+                reason = admission_block["reason"]
+            elif isinstance(material["adapter"], UnsupportedAdapter):
                 reason = material["adapter"].reason
             elif material["request"]["request_id"] in preflight:
                 reason = f"pre-admission failure: {preflight[material['request']['request_id']]}"
@@ -887,7 +973,9 @@ def status(config_path, *, adapter=None):
             "budget_blocked_requests": blocked,
             "unsupported_requests": unsupported_count,
             "preflight_failed_requests": preflight_count,
-            "action_required": "amend_budget" if control == "paused_budget" else None,
+            "admission_block": admission_block,
+            "action_required": "review_safety_block" if admission_block else
+                               "amend_budget" if control == "paused_budget" else None,
             "budget": budget, "requests": request_status}
 
 
@@ -901,6 +989,8 @@ def amend_budget(config_path, amendment_path, *, adapter=None):
         raise BenchmarkError("budget amendment does not match bound run")
     with _runner_lock(config["database"]):
         verified = _initialize(config, binding, materials)
+        if verified.execution.admission_block(config["scope"]):
+            raise BenchmarkError("blocked scope cannot be resumed by increasing its budget")
         if _control(verified) == "stopped_budget":
             raise BenchmarkError("stopped run cannot be resumed or amended")
         balance = BudgetLedger(config["database"]).increase_cap(
@@ -1000,7 +1090,8 @@ def _export_operations_loaded(config, binding, materials):
                      "generation_returned_model": None,
                      "cost_currency": config["currency"],
                      "model": material["config"]["model"],
-                     "effort": material["config"].get("settings", {}).get("reasoning"),
+                     "effort": material["config"].get("settings", {}).get("reasoning",
+                         material["config"].get("settings", {}).get("effort")),
                      "response_sha256": None, "receipt_sha256": None,
                      "parsed_status": None, "predictions": [], "usage": None,
                      "observed_cost_micro_usd": entry["charge"] if entry and
@@ -1008,11 +1099,17 @@ def _export_operations_loaded(config, binding, materials):
                      "estimated_cost_micro_usd": None,
                      "unresolved_hold_micro_usd": entry["reserve_amount"] if config["currency"] == "USD" and entry and
                      entry["charge"] is None and row["state"] in ("outcome_unknown", "response_saved", "reconciled") else None,
-                     "active_reserve_micro_usd": entry["reserve_amount"] if entry and
+                     "active_reserve_micro_usd": entry["reserve_amount"] if entry and config["currency"] != "REQ" and
                      row["state"] == "dispatch_intent" else None,
                      "duration_seconds": None, "provider_generation_seconds": None,
                      "pure_inference_seconds": None, "input_tokens": None,
                      "output_tokens": None, "reasoning_tokens": None, "cache_tokens": None}
+        if config["currency"] == "REQ":
+            operation.update(accounting_unit="request", subscription_cost_status="unavailable",
+                             consumed_requests=entry["charge"] if entry else None,
+                             unresolved_request_hold=entry["reserve_amount"] if entry and
+                             entry["charge"] is None and row["state"] in
+                             ("dispatch_intent", "outcome_unknown", "response_saved", "reconciled") else None)
         if state and row["state"] == "response_saved" or (
                 state and row["state"] == "reconciled" and row["reconciliation_outcome"] == "response_saved"):
             receipt, response_ref = _verified_response(verified, request_id, state)
@@ -1041,7 +1138,7 @@ def _export_operations_loaded(config, binding, materials):
                 generation = observation.get("generation")
                 if generation:
                     operation["generation_returned_model"] = generation.get("returned_model")
-                    operation["returned_provider"] = generation.get("provider_name")
+                    operation["returned_provider"] = generation.get("provider_name") or operation["returned_provider"]
                     value = generation.get("generation_time_ms")
                     if type(value) is int and value >= 0:
                         operation["provider_generation_seconds"] = value / 1000

@@ -34,6 +34,14 @@ def _write_private_html(path, content):
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="classification-bench")
     sub = parser.add_subparsers(dest="command", required=True)
+    initialize = sub.add_parser("init", help="Create a private task setup from an explicit import specification")
+    initialize.add_argument("--spec", required=True)
+    initialize.add_argument("--directory", required=True)
+    imported = sub.add_parser("import", help="Freeze and validate user-owned JSON, JSONL or CSV task data")
+    imported.add_argument("--spec", required=True)
+    imported.add_argument("--directory", required=True)
+    validated = sub.add_parser("validate", help="Verify an imported task package and its frozen source bindings")
+    validated.add_argument("--directory", required=True)
     plan = sub.add_parser("plan", help="Build deterministic requests without reference labels")
     plan.add_argument("--task", required=True)
     plan.add_argument("--experiment", required=True)
@@ -54,6 +62,7 @@ def main(argv=None):
     exported.add_argument("--config", required=True)
     exported.add_argument("--out", default="-")
     for command, help_text in (
+        ("preflight", "Check authentication, runtime controls and isolation without inference"),
         ("preview", "Preview matrix, exact request identities and spending bounds"),
         ("run", "Execute an admitted matrix; never replay ambiguous dispatches"),
         ("status", "Inspect all planned requests and shared budget"),
@@ -76,7 +85,17 @@ def main(argv=None):
     increase.add_argument("--authorization", required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == "plan":
+        if args.command == "init":
+            from .task_setup import initialize_task, read_specification
+            output = initialize_task(args.directory, read_specification(args.spec),
+                                     base_directory=Path(args.spec).resolve().parent)
+        elif args.command == "import":
+            from .task_setup import import_task
+            output = import_task(args.spec, args.directory)
+        elif args.command == "validate":
+            from .task_setup import validate_setup
+            output = validate_setup(args.directory)
+        elif args.command == "plan":
             output = build_plan(_read(args.task), _read(args.experiment), _read(args.inputs))
         elif args.command == "evaluate":
             output = evaluate(_read(args.task), _read(args.plan), _read(args.labels),
@@ -109,7 +128,7 @@ def main(argv=None):
             return
         else:
             from . import benchmark
-            operation = {"preview": benchmark.preview, "run": benchmark.run,
+            operation = {"preflight": benchmark.preflight, "preview": benchmark.preview, "run": benchmark.run,
                          "status": benchmark.status, "recover": benchmark.recover,
                          "export": benchmark.export_predictions}[args.command]
             output = operation(args.config)
