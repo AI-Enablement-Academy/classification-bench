@@ -24,6 +24,20 @@ Sources: [scheduler](../classification_bench/benchmark.py), [runtime contract](A
 
 Use `settings.adapter` equal to `claude_code` or `codex`. Declare the exact model ID, absolute native Mach-O CLI executable, exact `--version` output, and explicit effort. The configuration also requires `extra_usage_disabled: true`, a UTC `extra_usage_verified_at` timestamp ending in `Z`, and an `extra_usage_source` describing the actual operator check. Never invent that check. Optional timeout and output-size bounds are validated by the adapter. The provider concurrency keys are `claude_subscription` and `chatgpt_subscription`.
 
+New live work in the `claude-haiku-...` namespace has the following explicit capability checks, verified against official documentation on 8 October 2026:
+
+| Exact model ID | Accepted effort | CLI requirement |
+| --- | --- | --- |
+| `claude-haiku-4-5` | `not_applicable` | Existing exact-version and required-control preflight |
+| `claude-haiku-4-5-20251001` | `not_applicable` | Existing exact-version and required-control preflight |
+| `claude-haiku-5-5` | `low`, `medium`, `high`, `xhigh`, `max` | Claude Code 2.1.293 or later; native version output such as `2.1.293 (Claude Code)` |
+
+Haiku 4.5 does not support effort, so its command omits `--effort`. New Haiku 5.5 work requires an explicit supported level and emits that flag. Its `not_applicable` setting, insufficient or unparseable native version, and unrecognized `claude-haiku-...` IDs are rejected before the preflight worker, isolation probe or admission. Dispatch repeats the same checks before invoking a worker. The minimum-version check uses the frozen declaration; successful preflight still verifies the actual executable's identical version output and required flags. Validation for other model families remains unchanged. [Haiku 4.5 model specification](https://platform.claude.com/docs/en/models/haiku-4-5/overview), [Claude Code model and effort controls](https://code.claude.com/docs/en/model-config)
+
+Historically accepted configurations remain constructible, and their frozen requests and saved receipts remain reproducible and readable through status, export, report and recovery. This includes older Haiku 5.5/`not_applicable` and unverified Haiku/`not_applicable` records. Construction or offline preparation is not current live capability approval: those combinations cannot pass the new live preflight or dispatch gate. No new capability annotation is inserted into a historical request body.
+
+These checks establish a documented request configuration, not account entitlement, serving availability or observed applied effort. Provider or managed settings can limit the applied level; the evidence continues to label the frozen level `requested_effort`. A supported model/effort never replaces the actual billing assertion or live dispatch authorization. [Claude Code effort limits](https://code.claude.com/docs/en/model-config#organization-effort-limits)
+
 The declaration is an operator assertion, not an authoritative provider billing query. It must be no more than 24 hours old at preflight, admission and dispatch. [Audited same-run renewal](SUBSCRIPTION_ASSERTIONS.md) now appends an immutable run/configuration-bound assertion revision and private evidence without changing the frozen configuration, plan, request identity or provider capsule. `account-check-renew` verifies the separate authorization and evidence; it performs no dispatch and does not clear safety blocks or unknown holds. A budget increase does not renew authentication/billing assertions.
 
 `python3 -m classification_bench preflight --config /private/run/config.json` checks runtime prerequisites without reserving capacity, creating a run database or dispatching inference. It does not require an already-written run-bound grant, although the configuration must declare its intended authorization-file path. Successful preflight does not establish model availability or authorize execution. `preview`, `run`, `status`, `recover`, `export` and `report` use the existing command shape.

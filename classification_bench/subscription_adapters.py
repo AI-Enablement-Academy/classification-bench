@@ -37,6 +37,16 @@ KINDS = ("claude_code", "codex")
 PROVIDERS = {"claude_code": "claude_subscription", "codex": "chatgpt_subscription"}
 MAX_OUTPUT_BYTES = 1_000_000
 EFFORTS = ("low", "medium", "high", "xhigh", "max", "not_applicable")
+# Documented Haiku controls, checked 2026-10-08. Do not infer capabilities from
+# a newer family name or an undocumented dated suffix.
+# https://code.claude.com/docs/en/model-config
+# https://platform.claude.com/docs/en/models/haiku-4-5/overview
+HAIKU_EFFORTS = {
+    "claude-haiku-4-5": ("not_applicable",),
+    "claude-haiku-4-5-20251001": ("not_applicable",),
+    "claude-haiku-5-5": ("low", "medium", "high", "xhigh", "max"),
+}
+HAIKU55_MIN_CLI_VERSION = (2, 1, 293)
 CODEX_DISABLED = (
     "shell_tool", "unified_exec", "apps", "plugins", "remote_plugin", "hooks",
     "memories", "multi_agent", "multi_agent_v2", "browser_use",
@@ -203,7 +213,8 @@ class SubscriptionAdapter:
         self.effort = settings["effort"]
         if self.effort not in EFFORTS or (self.kind == "codex" and self.effort == "not_applicable"):
             raise AdapterError("unsupported explicit effort")
-        if self.kind == "claude_code" and self.model.startswith("claude-haiku-") and self.effort != "not_applicable":
+        if (self.kind == "claude_code" and self.model.startswith("claude-haiku-")
+                and self.model != "claude-haiku-5-5" and self.effort != "not_applicable"):
             raise AdapterError("Haiku requires effort not_applicable")
         if settings["extra_usage_disabled"] is not True:
             raise AdapterError("paid extra usage must be disabled before subscription execution")
@@ -218,6 +229,20 @@ class SubscriptionAdapter:
             raise AdapterError("max_output_bytes must be between 512 and 1000000")
         self.config = json.loads(canonical_bytes(config))
         self._preflight = None
+
+    def _validate_live_controls(self):
+        """Current capabilities gate live work, never historical reproduction."""
+        if self.kind != "claude_code" or not self.model.startswith("claude-haiku-"):
+            return
+        allowed = HAIKU_EFFORTS.get(self.model)
+        if allowed is None:
+            raise AdapterError(f"unverified Haiku model capabilities: {self.model}")
+        if self.effort not in allowed:
+            raise AdapterError(f"{self.model} requires effort: {', '.join(allowed)}")
+        if self.model == "claude-haiku-5-5":
+            version = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+) \(Claude Code\)", self.cli_version)
+            if version is None or tuple(map(int, version.groups())) < HAIKU55_MIN_CLI_VERSION:
+                raise AdapterError("Haiku 5.5 requires Claude Code 2.1.293 or later with native version output")
 
     def prepare(self, plan, request, prompt):
         if (not isinstance(plan, dict) or not isinstance(request, dict) or not isinstance(prompt, dict) or
@@ -253,6 +278,7 @@ class SubscriptionAdapter:
                                f"{self.kind}:{self.model}:existing-account", request_id, ids)
 
     def preflight(self, worker=None, *, account_assertion=None):
+        self._validate_live_controls()
         assertion = account_assertion if account_assertion is not None else {
             "extra_usage_disabled": self.config["settings"]["extra_usage_disabled"],
             "verified_at": self.config["settings"]["extra_usage_verified_at"],
@@ -273,6 +299,7 @@ class SubscriptionAdapter:
         return attestation
 
     def dispatch(self, prepared, worker=None):
+        self._validate_live_controls()
         if not isinstance(prepared, PreparedRequest) or prepared.route != f"{self.kind}:{self.model}:existing-account":
             raise AdapterError("subscription prepared request required")
         if self._preflight is None:

@@ -1,5 +1,32 @@
 # Implementation status: 2026-10-08
 
+## Haiku controls and historical reads: verified follow-up
+
+The subscription adapter now supports the documented Haiku 5.5 effort levels
+with Claude Code 2.1.293 or later. Capability/version checks run before live
+preflight and dispatch. Historical construction, request reproduction, saved
+status, exports, reports and completed recovery remain readable; unknown model
+capabilities cannot start new execution. The paid-usage guard is unchanged.
+See [the capability contract](SUBSCRIPTION_RUNNER.md).
+
+Independent review caught and resolved a historical-read regression in the
+initial correction. The revised code received **APPROVE**, with no remaining
+scoped code findings. The older [Claude smoke packet](CLAUDE_ACCEPTANCE_PLAN_20261008.md)
+now qualifies its preparation-version limitation without changing its private
+candidate files or proposed one-request Haiku 4.5 scope.
+
+Final full suite: **663 tests passed in 80.231 seconds, no skips**, exit 0.
+A fresh wheel and isolated virtual environment again completed both fictional
+managed workflows (28 CLI calls) and the CSV guide (11 Python invocations) from
+an unrelated working directory. All 40 installed package source hashes matched
+the revised checkout. [Private verification](../private-data/subscription-controls-20261008/verification.json)
+retains the final test log digest and installed-operator evidence.
+
+The [expanded release audit](RELEASE_ACCEPTANCE_AUDIT.md) now covers all nine
+goal sections. Claude/Codex live acceptance and exact rendered report acceptance
+remain pending. No provider inference or account change occurred in this follow-up.
+
+
 ## Evaluation provenance, deeper findings and current OpenRouter acceptance
 
 New [evaluations](EVALUATION_PROVENANCE.md) bind scoring algorithm/source identity

@@ -122,6 +122,95 @@ class SubscriptionContractTests(unittest.TestCase):
         with self.assertRaisesRegex(AdapterError, "explicit model"):
             SubscriptionAdapter(value)
 
+    def test_haiku55_supported_efforts_reach_request_and_command(self):
+        for effort in ("low", "medium", "high", "xhigh", "max"):
+            for version in ("2.1.293 (Claude Code)", "2.1.300 (Claude Code)", "3.0.0 (Claude Code)"):
+                with self.subTest(effort=effort, version=version):
+                    value = config("claude_code")
+                    value["model"] = "claude-haiku-5-5"
+                    value["settings"].update(effort=effort, cli_version=version)
+                    adapter = SubscriptionAdapter(value)
+                    body = json.loads(material(adapter).body)
+                    self.assertEqual(body["model"], "claude-haiku-5-5")
+                    self.assertEqual(body["effort"], effort)
+                    args = command(adapter, body, Path("/tmp/fresh"))
+                    self.assertEqual(args[args.index("--model") + 1], "claude-haiku-5-5")
+                    self.assertEqual(args[args.index("--effort") + 1], effort)
+
+    def test_haiku55_rejects_omitted_or_unsupported_effort(self):
+        for effort in ("not_applicable", None, "ultracode"):
+            with self.subTest(effort=effort):
+                value = config("claude_code")
+                value["model"] = "claude-haiku-5-5"
+                value["settings"].update(effort=effort, cli_version="2.1.293 (Claude Code)")
+                with self.assertRaisesRegex(AdapterError, "effort"):
+                    SubscriptionAdapter(value).preflight(worker=Mock())
+
+    def test_haiku55_requires_documented_native_version(self):
+        for version in ("2.1.292 (Claude Code)", "2.0.999 (Claude Code)",
+                        "1.99.999 (Claude Code)", "fixture-cli 2.1.293", "2.1.293",
+                        "2.1.293-beta (Claude Code)"):
+            with self.subTest(version=version):
+                value = config("claude_code")
+                value["model"] = "claude-haiku-5-5"
+                value["settings"].update(effort="low", cli_version=version)
+                with self.assertRaisesRegex(AdapterError, "Haiku 5.5 requires Claude Code 2.1.293"):
+                    SubscriptionAdapter(value).preflight(worker=Mock())
+
+    def test_haiku55_still_requires_disabled_paid_usage(self):
+        value = config("claude_code")
+        value["model"] = "claude-haiku-5-5"
+        value["settings"].update(effort="low", cli_version="2.1.293 (Claude Code)",
+                                 extra_usage_disabled=False)
+        with self.assertRaisesRegex(AdapterError, "paid extra usage must be disabled"):
+            SubscriptionAdapter(value)
+
+    def test_unknown_haiku_capabilities_fail_before_worker_preflight(self):
+        for model in ("claude-haiku-4-6", "claude-haiku-5-5-20261007", "claude-haiku-6"):
+            with self.subTest(model=model):
+                value = config("claude_code")
+                value["model"] = model
+                value["settings"].update(effort="not_applicable", cli_version="2.1.293 (Claude Code)")
+                with self.assertRaisesRegex(AdapterError, "unverified Haiku model capabilities"):
+                    SubscriptionAdapter(value).preflight(worker=Mock())
+
+    def test_legacy_haiku_live_controls_fail_before_worker_or_dispatch(self):
+        for model, effort, version, reason in (
+                ("claude-haiku-5-5", "not_applicable", "2.1.293 (Claude Code)", "requires effort"),
+                ("claude-haiku-5-5", "low", "2.1.292 (Claude Code)", "requires Claude Code 2.1.293"),
+                ("claude-haiku-3-5-20241022", "not_applicable", "2.1.293 (Claude Code)",
+                 "unverified Haiku model capabilities")):
+            with self.subTest(model=model, effort=effort, version=version):
+                value = config("claude_code")
+                value["model"] = model
+                value["settings"].update(effort=effort, cli_version=version)
+                adapter = SubscriptionAdapter(value)
+                prepared = material(adapter)
+                worker = Mock()
+                with self.assertRaisesRegex(AdapterError, reason):
+                    adapter.preflight(worker=worker)
+                worker.preflight.assert_not_called()
+                # A stale or supplied attestation cannot bypass current controls.
+                adapter._preflight = {"extra_usage_guard": {
+                    "verified_at": value["settings"]["extra_usage_verified_at"]}}
+                with self.assertRaisesRegex(AdapterError, reason):
+                    adapter.dispatch(prepared, worker=worker)
+                worker.dispatch.assert_not_called()
+
+    def test_haiku45_known_ids_retain_no_effort_behavior(self):
+        for model in ("claude-haiku-4-5", "claude-haiku-4-5-20251001"):
+            with self.subTest(model=model):
+                value = config("claude_code")
+                value["model"] = model
+                value["settings"]["effort"] = "not_applicable"
+                adapter = SubscriptionAdapter(value)
+                body = json.loads(material(adapter).body)
+                self.assertEqual(body["effort"], "not_applicable")
+                self.assertNotIn("--effort", command(adapter, body, Path("/tmp/fresh")))
+                value["settings"]["effort"] = "low"
+                with self.assertRaisesRegex(AdapterError, "not_applicable"):
+                    SubscriptionAdapter(value)
+
     def test_clean_environment_retains_account_location_without_api_credentials(self):
         source = {"HOME": "/Users/operator", "USER": "operator", "PATH": "/evil/wrappers",
                   "ANTHROPIC_API_KEY": "not-a-real-key", "OPENAI_API_KEY": "not-a-real-key",
@@ -341,8 +430,8 @@ class SubscriptionContractTests(unittest.TestCase):
 
 
 class SubscriptionWorkerTests(unittest.TestCase):
-    def _preflight(self, kind, *, auth=None, version=None, help_text=None):
-        adapter = SubscriptionAdapter(config(kind))
+    def _preflight(self, kind, *, auth=None, version=None, help_text=None, config_value=None):
+        adapter = SubscriptionAdapter(config(kind) if config_value is None else config_value)
         worker = SubscriptionCLIWorker()
         worker.probe = Mock(return_value={"reference_read_denied": True})
         correct_auth = (b'{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","email":"private@example.com"}'
@@ -380,6 +469,18 @@ class SubscriptionWorkerTests(unittest.TestCase):
             self._preflight("codex", version=b"different-cli")
         with self.assertRaisesRegex(AdapterError, "required controls"):
             self._preflight("claude_code", help_text="--print --model")
+
+    def test_haiku55_preflight_requires_effort_control_without_claiming_availability(self):
+        value = config("claude_code")
+        value["model"] = "claude-haiku-5-5"
+        value["settings"].update(effort="low", cli_version="2.1.293 (Claude Code)")
+        result, _ = self._preflight("claude_code", config_value=value)
+        self.assertIn("--effort", result["supported_controls"])
+        self.assertEqual(result["requested_model"], "claude-haiku-5-5")
+        self.assertEqual(result["requested_effort"], "low")
+        self.assertEqual(result["model_availability"], "not exposed by read-only CLI")
+        with self.assertRaisesRegex(AdapterError, "required controls"):
+            self._preflight("claude_code", config_value=value, help_text=" ".join(CLAUDE_FLAGS))
 
     def test_unsupported_host_fails_before_any_cli_process(self):
         adapter = SubscriptionAdapter(config())

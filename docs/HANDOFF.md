@@ -1,5 +1,21 @@
 # Implementation handoff
 
+## Latest subscription-control follow-up: 2026-10-08
+
+[Implementation status](IMPLEMENTATION_STATUS.md) records the corrected Haiku
+5.5 capability checks, preserved historical reads, 663 passing offline tests,
+fresh installed operator verification and independent code approval. Use the
+updated [nine-section release audit](RELEASE_ACCEPTANCE_AUDIT.md); the older
+claim that only rendered acceptance remained belongs to the earlier objective.
+
+The exact [Claude one-request proposal](CLAUDE_ACCEPTANCE_PLAN_20261008.md)
+awaits permission to disable account-wide Usage credits. Its retained false
+guard and private candidate are unchanged. The [Codex prerequisite](CODEX_ACCEPTANCE_PREREQUISITES_20261008.md)
+still lacks proof excluding existing paid credits. The current
+[rendered checklist](REPORT_UX_CHECK.md) awaits permitted operator observations.
+No new provider inference, account change or spend occurred in this follow-up.
+
+
 ## Latest verified follow-up: 2026-10-08
 
 [Implementation status](IMPLEMENTATION_STATUS.md) now records 653 passing tests,
