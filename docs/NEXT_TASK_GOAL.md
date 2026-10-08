@@ -124,7 +124,9 @@ Treat visual quality as an acceptance requirement: match or exceed the recruitme
 
 7. Preserve privacy and existing authorization boundaries.
 
-Keep classification-bench private. Credentials belong in an ignored private project environment file, never source, reports or commits.
+Keep classification-bench private during implementation and acceptance. Credentials belong in an ignored private project environment file, never source, reports or commits.
+
+The user intends to open-source the completed tool. Prepare a public-release milestone after the implementation and acceptance gates pass, with Apache-2.0 as the provisional preference and MIT as an alternative; the final license choice remains unsettled. Before publication, check redistribution rights and required notices for included code/dependencies, and inspect the proposed public files and Git history for credentials, private datasets, raw responses and account details. Release the reusable tool and deliberately public examples; keep private benchmark evidence and the separate reference project private. This future milestone does not change repository visibility now. License sources: [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0) and [MIT License](https://opensource.org/license/mit).
 
 The authorized shared credential lookup location is /Users/adamkovacs/Documents/codebuild/.env. Use only relevant credentials within existing authorization. Separate private raw evidence from deliberately sanitized exports. Public deployment or dataset publication is not implied.
 
