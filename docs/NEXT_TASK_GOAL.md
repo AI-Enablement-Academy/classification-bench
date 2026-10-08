@@ -47,7 +47,7 @@ Claude Code and Codex:
 - Use fresh sessions for independent work.
 - Enforce and test configurable isolation from references, unrelated repository context, tools, hooks, MCP, skills and memory. Disclose unavoidable CLI-supplied context.
 - Fail preflight when required reference protection cannot be enforced.
-- Verify paid extra usage is disabled where applicable. Never silently switch to a paid API, enable overage or redeem credits.
+- Default to verified disabled paid extra usage. The user explicitly approved credit charges on 8 October 2026: support a separate, explicit, run-bound paid-credit policy with truthful account state, request limits and charge-visibility disclosures. Never manufacture a disabled-usage assertion or silently switch to a paid API, change account settings, top up or expand an approval. Credit-use permission does not establish an enforceable dollar cap.
 - Handle quota exhaustion, cancellation and ambiguous interruptions safely.
 
 Claude Code and Codex adapters are required release features, not placeholders.
@@ -128,13 +128,13 @@ Keep classification-bench private during implementation and acceptance. Credenti
 
 The user intends to open-source the completed tool. Prepare a public-release milestone after the implementation and acceptance gates pass, with Apache-2.0 as the provisional preference and MIT as an alternative; the final license choice remains unsettled. Before publication, check redistribution rights and required notices for included code/dependencies, and inspect the proposed public files and Git history for credentials, private datasets, raw responses and account details. Release the reusable tool and deliberately public examples; keep private benchmark evidence and the separate reference project private. This future milestone does not change repository visibility now. License sources: [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0) and [MIT License](https://opensource.org/license/mit).
 
-The authorized shared credential lookup location is /Users/adamkovacs/Documents/codebuild/.env. Use only relevant credentials within existing authorization. Separate private raw evidence from deliberately sanitized exports. Public deployment or dataset publication is not implied.
+The authorized shared credential lookup location is /Users/adamkovacs/Documents/codebuild/.env. Use only relevant credentials within existing authorization. Separate private raw evidence from deliberately sanitized exports. On 8 October 2026 the user explicitly authorized a GitHub Pages visual preview. Publish only newly generated, deliberately fictional demonstration content after a content audit; keep the source repository, private evidence and reference benchmark private. Use a separate preview repository if the private repository is not eligible for Pages. This does not authorize publishing real datasets or bypassing the recorded browser restriction.
 
 Prepare code, offline tests and exact smoke plans before live execution. Each plan must specify provider, model, task/input provenance, request count, cost bound, cap, exhaustion policy and authentication source.
 
 This goal does not expand existing inference or subscription authority. Dispatch when existing explicit authorization covers the prepared scope; otherwise request the missing authorization without re-requesting permission already granted.
 
-Reconcile new authorized spending against this project's existing aggregate USD 10 allowance and ledger, including previous charges, allocations and unresolved holds. Do not assume USD 10 remains unspent or import the reference project's budgets. Account upgrades, payment changes and additional spending require explicit authorization.
+Reconcile new authorized spending against this project's existing aggregate USD 10 allowance and ledger, including previous charges, allocations and unresolved holds. The later credit-charge approval removes the no-credit prerequisite but does not specify a higher dollar allowance. If a native CLI cannot enforce the remaining monetary limit, prepare the exact request-capped proposal and resolve that budget limitation explicitly before dispatch. Do not assume USD 10 remains unspent or import the reference project's budgets. Account upgrades, payment changes and additional spending require explicit authorization.
 
 8. Use subagents aggressively, with intelligent model selection.
 

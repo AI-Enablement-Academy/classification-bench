@@ -1,5 +1,44 @@
 # Implementation status: 2026-10-08
 
+## Explicit credit policy and fictional Pages preview
+
+The runner now supports an explicit version-2 paid-credit policy. It records
+truthful enabled/unknown account state separately from human approval, retains
+private evidence, binds the exact run/configuration and shared REQ scope cap,
+and verifies receipt policy against immutable admission history. Legacy v1
+assertions keep their original bytes and default-deny behavior. Standing
+permission persists across fresh account observations. An explicit denial
+revokes it; stale approval cannot be restored by a later observation.
+See [subscription assertions](SUBSCRIPTION_ASSERTIONS.md).
+
+Independent review found and repaired a BLOCKING stale-approval resurrection
+bug. Final verdict: **APPROVE**, no remaining BLOCKING findings. **RESIDUAL:**
+REQ limits cannot guarantee the USD 10 ceiling for native subscription credits;
+the [exact two-request monetary exception](CLI_CREDIT_SMOKE_PLAN_20261008.md)
+still awaits a user answer. Credit-use permission itself is already granted.
+No new provider inference, credential copy, account change or top-up occurred.
+
+Final full suite: **697 tests passed in 121.247 seconds, no skips**. The
+implementation's 90 focused checks and independent reviewer's 85 checks passed.
+A fresh wheel/venv completed both fictional managed workflows (28 CLI calls)
+and the CSV guide (11 Python invocations) from an unrelated working directory.
+All 40 installed package source hashes matched. [Private verification](../private-data/credit-preview-20261008/verification.json)
+retains logs, digests and exact source identities.
+
+The [public fictional preview](https://ai-enablement-academy.github.io/classification-bench-preview/)
+is deployed from a separate static repository; the harness repository remains
+private. Its builder, recursive privacy audit and 13 focused tests passed
+independent review. The 19-file bundle contains only newly invented data,
+including 36 embedded downloads and both workflow phases. Every served file
+matches the audited bytes. [Publication and inspection instructions](PUBLIC_PREVIEW.md)
+explain the exact fixtures and verification boundary.
+
+**The goal remains incomplete.** Native Claude Code/Codex live acceptance and
+exact rendered acceptance are pending. HTTP delivery, source checks and Node
+control tests do not establish visual, keyboard, print or native-download
+acceptance. The recorded browser restriction remains in force.
+
+
 ## Haiku controls and historical reads: verified follow-up
 
 The subscription adapter now supports the documented Haiku 5.5 effort levels

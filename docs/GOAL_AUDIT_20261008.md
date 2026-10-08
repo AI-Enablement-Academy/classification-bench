@@ -1,5 +1,22 @@
 # Goal requirement audit, 8 October 2026
 
+## Credit authorization update, 8 October 2026
+
+The user has explicitly approved consumption of existing Claude and Codex
+credits. This supersedes any disabled-credit acceptance prerequisite in the
+historical audit below: enabled or unknown credit state is no longer itself a
+blocker once the approval applies through an honest, run-bound version 2
+assertion and exact dispatch grant. Preserve historical false guards and
+account observations. See [the assertion contract](SUBSCRIPTION_ASSERTIONS.md).
+
+Claude and Codex live acceptance remain pending on one unanswered question:
+whether exactly one invocation of each, with no retry or top-up, is acceptable
+despite no verified hard USD cap. The project USD 10 ceiling remains unchanged.
+No account change, top-up or live run follows from this note. The
+[combined CLI credit smoke plan](CLI_CREDIT_SMOKE_PLAN_20261008.md) records the
+scope, monetary limit and remaining authorization question. This update does
+not establish live serving or rendered acceptance.
+
 **Follow-up evidence:** the [current implementation status](IMPLEMENTATION_STATUS.md)
 records the resolved evaluator/operational/per-class implementation gaps,
 653 passing tests and the fresh installed complete operator workflow. The

@@ -267,16 +267,16 @@ class SubscriptionRuntime:
         return None
 
     def source_digests(self, adapter):
-        from . import adapters, isolation, subscription_adapters
+        from . import adapters, isolation, subscription_adapters, subscription_assertions
         sources = [Path(module.__file__).read_bytes()
-                   for module in (adapters, subscription_adapters)]
+                   for module in (adapters, subscription_adapters, subscription_assertions)]
         return {"adapter_source_sha256": digest(b"".join(
                     len(raw).to_bytes(8, "big") + raw for raw in sources)),
                 "runtime_source_sha256": _module_digest(self),
                 "transport_source_sha256": digest(b"".join(
                     len(raw).to_bytes(8, "big") + raw for raw in
                     (Path(module.__file__).read_bytes() for module in
-                     (subscription_adapters, isolation))))}
+                     (subscription_adapters, subscription_assertions, isolation))))}
 
     def preflight(self, adapter, prepared, worker, *, account_assertion=None):
         from .manifest import canonical_bytes
@@ -286,9 +286,10 @@ class SubscriptionRuntime:
     def dispatch(self, adapter, prepared, api_key, worker):
         return adapter.dispatch(prepared, worker=worker)
 
-    def parse(self, adapter, result, *, expected_request_id, expected_ids, expected_model):
+    def parse(self, adapter, result, *, expected_request_id, expected_ids, expected_model, account_assertion=None):
         return adapter.parse(result, expected_request_id=expected_request_id,
-                             expected_ids=expected_ids, expected_model=expected_model)
+                             expected_ids=expected_ids, expected_model=expected_model,
+                             account_assertion=account_assertion)
 
     def supplement(self, adapter, parsed, api_key, worker, artifact_root, config):
         evidence = (parsed.usage or {}).get("subscription")

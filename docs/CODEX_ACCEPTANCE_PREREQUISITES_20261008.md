@@ -1,5 +1,22 @@
 # Codex acceptance prerequisites: 8 October 2026
 
+## Credit authorization update, 8 October 2026
+
+The user has explicitly approved consumption of existing Claude and Codex
+credits. This supersedes the credit-exclusion prerequisite below: enabled or
+unknown credit state is no longer itself a blocker once the approval applies
+through an honest, run-bound version 2 assertion and exact dispatch grant.
+Preserve the historical account observations and uncertainty; do not declare
+credits disabled without evidence. See [the assertion contract](SUBSCRIPTION_ASSERTIONS.md).
+
+Live execution remains pending on one unanswered question: whether exactly one
+Claude invocation and one Codex invocation, with no retry or top-up, are
+acceptable despite no verified hard USD cap. The project USD 10 ceiling remains
+unchanged. No account change, top-up or live run follows from this note. The
+[combined CLI credit smoke plan](CLI_CREDIT_SMOKE_PLAN_20261008.md) records the
+scope, monetary limit and remaining authorization question. Model entitlement
+and actual serving remain unverified.
+
 **Live Codex acceptance remains blocked by billing evidence.** The workspace spend-limit alternative examined here does not establish that the selected native CLI invocation cannot consume existing paid credits. The local model catalog supplies an explicit smoke candidate, `gpt-6.1-sol` with `low` effort, but does not prove that CLI 0.156.1 can serve it.
 
 This was a bounded read-only investigation at repository commit `8ed870e`. It inspected local configuration source, the existing command builder, selected noncredential model-catalog fields and official OpenAI documentation. The local source was version 0.153.4, so it is not runtime proof for the selected CLI 0.156.1. It did not repeat the earlier CLI help/login-status checks, run inference, change account settings, inspect credential files, or create an account assertion. The earlier [subscription readiness audit](SUBSCRIPTION_READINESS_20261008.md) retains the native executable/version evidence and the observed billing prerequisites.

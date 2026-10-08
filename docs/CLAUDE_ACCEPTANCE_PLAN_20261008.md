@@ -1,5 +1,22 @@
 # Claude acceptance candidate: 8 October 2026
 
+## Credit authorization update, 8 October 2026
+
+The user has explicitly approved consumption of existing Claude and Codex
+credits. This supersedes the disabled-credit prerequisite and proposed account
+change below: enabled or unknown credit state is no longer itself a blocker
+once the approval applies through an honest, run-bound version 2 assertion and
+exact dispatch grant. Preserve this packet's false guard and account
+observations; do not rewrite them as disabled or reuse the packet as a grant.
+See [the assertion contract](SUBSCRIPTION_ASSERTIONS.md).
+
+Live execution remains pending on one unanswered question: whether exactly one
+Claude invocation and one Codex invocation, with no retry or top-up, are
+acceptable despite no verified hard USD cap. The project USD 10 ceiling remains
+unchanged. No account change, top-up or live run follows from this note. The
+[combined CLI credit smoke plan](CLI_CREDIT_SMOKE_PLAN_20261008.md) records the
+scope, monetary limit and remaining authorization question.
+
 The proposed smoke is **one Claude Code invocation for fictional case `toy-a`, using `claude-haiku-4-5-20251001`**. It is blocked: the matched Claude organization/billing context has usage credits enabled. The private candidate preserves `extra_usage_disabled: false`; the real adapter rejects it. No executable workflow, authorization, ledger, preflight or inference was created.
 
 This packet was prepared against commit `8ed870ebf6a5c2024db8f6de70117bd1c8887db4`, using the [active goal](NEXT_TASK_GOAL.md), [subscription readiness audit](SUBSCRIPTION_READINESS_20261008.md), [adapter](../classification_bench/subscription_adapters.py), and [generic workflow contract](WORKFLOW_DESIGN.md). Apply existing explicit authority when it covers the final scope. The project USD 10 allowance does not establish a subscription request authorization or authorize an account-setting change.

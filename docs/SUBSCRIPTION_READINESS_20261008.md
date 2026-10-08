@@ -1,5 +1,22 @@
 # Subscription readiness audit: 8 October 2026
 
+## Credit authorization update, 8 October 2026
+
+The user has explicitly approved consumption of existing Claude and Codex
+credits. This supersedes the disabled-credit prerequisite in the readiness
+audit below: enabled or unknown credit state is no longer itself a blocker
+once the approval applies through an honest, run-bound version 2 assertion and
+exact dispatch grant. Preserve the historical false guards and account
+observations; do not rewrite them as disabled. See [the assertion contract](SUBSCRIPTION_ASSERTIONS.md).
+
+Live execution remains pending on one unanswered question: whether exactly one
+Claude invocation and one Codex invocation, with no retry or top-up, are
+acceptable despite no verified hard USD cap. The project USD 10 ceiling remains
+unchanged. No account change, top-up or live run follows from this note. The
+[combined CLI credit smoke plan](CLI_CREDIT_SMOKE_PLAN_20261008.md) records the
+scope, monetary limit and remaining authorization question. Fresh account
+evidence, runtime prerequisites and model serving still need their own checks.
+
 **Live Claude Code and Codex acceptance remains blocked by account billing evidence.** The installed native CLIs expose the required noninteractive controls and report subscription authentication. Neither result proves that paid usage credits are disabled, that the account observed in a browser is the CLI account, or that a requested model is available.
 
 This audit used read-only version, help and login-status commands, source inspection, official documentation and offline tests. It sent no model request, changed no account setting, redeemed no credits, and opened or copied no credential file. Authentication output was reduced to the minimum fields below; account identifiers and raw status output are not reproduced here. The native CLI checks were made at approximately `2026-10-08T03:08:08Z`.

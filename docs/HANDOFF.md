@@ -1,5 +1,25 @@
 # Implementation handoff
 
+## Credit approval and fictional Pages preview: 2026-10-08
+
+The user now explicitly approves credit consumption and a GitHub Pages visual
+preview. Credit-enabled accounts no longer require an account-settings change:
+use the explicit version-2 [paid-credit policy](SUBSCRIPTION_ASSERTIONS.md),
+with truthful enabled/unknown state, private evidence and exact run-bound
+approval. Earlier disabled-only plans and false guards remain historical.
+The [two-request smoke proposal](CLI_CREDIT_SMOKE_PLAN_20261008.md) is one Claude
+and one Codex request, sequentially, without retries or top-ups. A user answer
+is still pending on its disclosed lack of a guaranteed USD cap; the USD 10
+project ceiling has not increased. No new inference or account change occurred.
+
+The [public preview](PUBLIC_PREVIEW.md) uses only newly invented fictional data
+in a separate static repository. The harness source repository stays private.
+Delivery checks do not establish rendered acceptance. Follow the exact report
+[inspection checklist](REPORT_UX_CHECK.md) and preserve the recorded browser
+restriction. Current verification and publication evidence are recorded in
+[implementation status](IMPLEMENTATION_STATUS.md).
+
+
 ## Latest subscription-control follow-up: 2026-10-08
 
 [Implementation status](IMPLEMENTATION_STATUS.md) records the corrected Haiku
@@ -106,6 +126,6 @@ See [framework comparison](FRAMEWORK_COMPARISON.md) before starting another fram
 
 ## Authorization and completion
 
-Keep this repository private. The user's dated USD 10 inference approval and Cloudflare credential setup authorization are recorded in [the current goal](NEXT_TASK_GOAL.md); they do not authorize a subscription upgrade, public deployment or real dataset publication. The original case-study caps are separate. Prepare concrete configurations, input provenance, request counts and budget allocations before additional dispatch. Preserve prior exposure within the aggregate cap. A missing prerequisite should stop only that gate, not independent implementation, tests or report work.
+Keep this repository private. The user's dated USD 10 inference approval and Cloudflare credential setup authorization are recorded in [the current goal](NEXT_TASK_GOAL.md); they do not authorize a subscription upgrade or real dataset publication. The later 8 October authorization separately permits the fictional Pages preview above. The original case-study caps are separate. Prepare concrete configurations, input provenance, request counts and budget allocations before additional dispatch. Preserve prior exposure within the aggregate cap. A missing prerequisite should stop only that gate, not independent implementation, tests or report work.
 
 The product should run without repeated agent supervision. A collection of adapters that still needs a person to issue per-phase commands, move files and hand-edit result reports does not meet the goal. Track the remaining work in the roadmap and report verified boundaries plainly.

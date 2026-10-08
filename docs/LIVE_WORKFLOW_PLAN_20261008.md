@@ -1,5 +1,21 @@
 # Minimal live workflow plan, 2026-10-08
 
+## Credit authorization update, 8 October 2026
+
+The user has explicitly approved consumption of existing Claude and Codex
+credits. This supersedes the disabled-credit prerequisite for those routes
+below: enabled or unknown credit state is no longer itself a blocker once the
+approval applies through an honest, run-bound version 2 assertion and exact
+dispatch grant. Preserve the historical false guards and account observations;
+do not relabel them as disabled. See [the assertion contract](SUBSCRIPTION_ASSERTIONS.md).
+
+Live execution remains pending on one unanswered question: whether exactly one
+Claude invocation and one Codex invocation, with no retry or top-up, are
+acceptable despite no verified hard USD cap. The project USD 10 ceiling remains
+unchanged. No account change, top-up or live run follows from this note. The
+[combined CLI credit smoke plan](CLI_CREDIT_SMOKE_PLAN_20261008.md) records the
+scope, monetary limit and remaining authorization question.
+
 The read-only inventory at `2026-10-08T03:11:55.974865Z` reconciled the saved live
 ledgers as **313 microUSD in known charges,
 zero active reservations and 559,151 microUSD in unresolved holds**. Their

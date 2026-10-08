@@ -22,7 +22,7 @@ Sources: [scheduler](../classification_bench/benchmark.py), [runtime contract](A
 
 ## Configure and check an account-backed route
 
-Use `settings.adapter` equal to `claude_code` or `codex`. Declare the exact model ID, absolute native Mach-O CLI executable, exact `--version` output, and explicit effort. The configuration also requires `extra_usage_disabled: true`, a UTC `extra_usage_verified_at` timestamp ending in `Z`, and an `extra_usage_source` describing the actual operator check. Never invent that check. Optional timeout and output-size bounds are validated by the adapter. The provider concurrency keys are `claude_subscription` and `chatgpt_subscription`.
+Use `settings.adapter` equal to `claude_code` or `codex`. Declare the exact model ID, absolute native Mach-O CLI executable, exact `--version` output, and explicit effort. Legacy settings require `extra_usage_disabled: true`, a UTC `extra_usage_verified_at` timestamp ending in `Z`, and an `extra_usage_source` describing the actual operator check. Never invent that check. Version 2 account assertions support explicit paid-credit permission as described below. Optional timeout and output-size bounds are validated by the adapter. The provider concurrency keys are `claude_subscription` and `chatgpt_subscription`.
 
 New live work in the `claude-haiku-...` namespace has the following explicit capability checks, verified against official documentation on 8 October 2026:
 
@@ -50,6 +50,29 @@ The worker currently requires macOS and a native CLI executable. Script wrappers
 
 ## Persistent admission blocks
 
-Observed paid overage, quota exhaustion, model-identity mismatch or CLI tool/context isolation violations block further admission for the run's scope. The first reason and evidence hash are recorded immutably. The ledger checks the guard inside the same transaction as capacity reservation, so concurrent workers cannot bypass a committed block. Already-admitted work may finish and preserve its evidence. Status reports `blocked_safety`; restart, recovery and cap increases do not clear it.
+Observed paid overage without an explicit admitted paid-credit approval, quota exhaustion, model-identity mismatch, CLI tool/context isolation violations or a mismatched version 2 receipt policy block further admission for the run's scope. Approved overage remains telemetry and does not by itself invalidate an otherwise valid response or create a block. The first blocking reason and evidence hash are recorded immutably. The ledger checks the guard inside the same transaction as capacity reservation, so concurrent workers cannot bypass a committed block. Already-admitted work may finish and preserve its evidence. Status reports `blocked_safety`; restart, recovery and cap increases do not clear it.
 
 No automatic guard removal is implemented. After investigating and resolving the prerequisite, prepare separately authorized never-sent work; do not replay completed or ambiguous attempts. A future reviewed guard-release workflow must preserve the original record.
+
+## Explicit paid-credit policy
+
+The default remains deny. Enabled paid usage or an unknown setting does not authorize spending. A version 2 assertion separates the observed account state from explicit permission to use existing account credits. It does not enable overage, redeem or purchase credits, change an account, use API authentication, fall back to a billing API or top up a balance. [Implementation](../classification_bench/subscription_adapters.py)
+
+For new work, replace the three legacy `extra_usage_*` setting fields with one `settings.account_assertion` object using these exact fields:
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | Integer `2` |
+| `extra_usage_disabled` | Boolean `true` when actually disabled, `false` when actually enabled, or `null` when unknown |
+| `verified_at`, `source` | The actual dated operator observation and its provenance; freshness remains 24 hours |
+| `paid_credit_authorization` | `null` for deny, or the explicit approval object below |
+| `account_check_sha256` | Lowercase SHA-256 of the exact private account-observation/approval evidence bytes |
+| `account_check_file` | Absolute path to that nonempty, mode-0600 evidence file, at most 1,000,000 bytes |
+
+The approval object requires exactly `approved: true`, a positive integer `request_cap`, an actual UTC `approved_at` timestamp and a nonempty `source` identifying the explicit human permission. No defaults provide permission. Permission has no invented 24-hour expiration: it persists for its unchanged run/configuration/scope/cap. The account observation remains subject to 24-hour freshness. An approval in the future is rejected.
+
+`request_cap` covers the whole shared REQ scope. It is not a separate request allowance for every configuration. A combined scope with one frozen Claude request and one frozen Codex request uses a total scope cap of 2; each approval binds the same scope cap and its exact configuration's one-request membership through the immutable run, configuration and plan. Another repeat or changed membership changes the run and requires a matching dispatch grant. Raising the ledger's shared cap beyond the paid approval refuses admission until a newer explicit paid approval covers it. [Admission ledger](../classification_bench/subscription_assertions.py), [mixed-route regression](../tests/test_subscription_runtime.py)
+
+The existing exact run-bound dispatch authorization remains required. Initial binding copies the checked evidence into the private content-addressed store, so restart verifies the retained copy rather than requiring the original source file forever. Pure preflight can inspect the configured evidence without creating a database; it is not dispatch authorization. Paid dispatch uses a bound ledger revision, and parsing/recovery compare the receipt policy to the exact immutable admission revision. A later approval cannot authorize an earlier unapproved receipt. A later policy change does not alter an earlier approved result. [Renewal and policy revisions](SUBSCRIPTION_ASSERTIONS.md)
+
+The ledger settles one REQ per attributable response and retains one REQ for an ambiguous dispatch. Actual subscription USD remains unknown when no authoritative charge is exposed; API-equivalent CLI cost is not an invoice. This opt-in does not enforce or claim the project's USD 10 aggregate ceiling. Paid native execution within that ceiling still needs an enforceable monetary bound or a separately explicit scope exception before dispatch. [Active spending boundary](NEXT_TASK_GOAL.md), [accounting tests](../tests/test_request_accounting.py)

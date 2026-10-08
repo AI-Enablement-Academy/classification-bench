@@ -31,6 +31,9 @@ import time
 from .adapters import AdapterError, ParsedResponse, PreparedRequest, TransportResult
 from .isolation import IsolationError, IsolationUnavailable, _ancestors, _literal, _subpath
 from .manifest import canonical_bytes, digest
+from .subscription_assertions import (ASSERTION_V2_KEYS, SubscriptionAssertionError,
+                                     _assertion, assertion_fields, assertion_guard,
+                                     check_assertion_fresh, paid_credit_approved)
 
 
 KINDS = ("claude_code", "codex")
@@ -192,8 +195,10 @@ class SubscriptionAdapter:
         if not isinstance(config, dict) or set(config) != {"id", "model", "settings"}:
             raise AdapterError("subscription configuration must contain id, model, settings")
         settings = config["settings"]
-        required = {"adapter", "executable", "cli_version", "effort", "extra_usage_disabled",
-                    "extra_usage_verified_at", "extra_usage_source"}
+        base = {"adapter", "executable", "cli_version", "effort"}
+        v2 = isinstance(settings, dict) and "account_assertion" in settings
+        required = base | ({"account_assertion"} if v2 else {
+            "extra_usage_disabled", "extra_usage_verified_at", "extra_usage_source"})
         if not isinstance(settings, dict) or not required <= set(settings) or set(settings) - required - {
                 "timeout_seconds", "max_output_bytes"}:
             raise AdapterError("subscription settings have missing or unsupported controls")
@@ -216,10 +221,25 @@ class SubscriptionAdapter:
         if (self.kind == "claude_code" and self.model.startswith("claude-haiku-")
                 and self.model != "claude-haiku-5-5" and self.effort != "not_applicable"):
             raise AdapterError("Haiku requires effort not_applicable")
-        if settings["extra_usage_disabled"] is not True:
-            raise AdapterError("paid extra usage must be disabled before subscription execution")
-        _text(settings["extra_usage_source"], "extra_usage_source")
-        self.extra_usage_verified_at = _timestamp(settings["extra_usage_verified_at"])
+        if v2:
+            assertion = settings["account_assertion"]
+            if not isinstance(assertion, dict) or set(assertion) != ASSERTION_V2_KEYS | {"account_check_file"}:
+                raise AdapterError("account_assertion must use exact v2 fields and an evidence file")
+            if not isinstance(assertion["account_check_file"], str) or not Path(assertion["account_check_file"]).is_absolute():
+                raise AdapterError("account_check_file must be an absolute private evidence path")
+            self.initial_account_assertion = {key: assertion[key] for key in ASSERTION_V2_KEYS}
+            self.account_check_file = assertion["account_check_file"]
+        else:
+            if settings["extra_usage_disabled"] is not True:
+                raise AdapterError("paid extra usage must be disabled before subscription execution")
+            self.initial_account_assertion = {"extra_usage_disabled": settings["extra_usage_disabled"],
+                "verified_at": settings["extra_usage_verified_at"], "source": settings["extra_usage_source"]}
+            self.account_check_file = None
+        try:
+            _assertion(self.initial_account_assertion)
+        except SubscriptionAssertionError as exc:
+            raise AdapterError(str(exc)) from exc
+        self.extra_usage_verified_at = _timestamp(self.initial_account_assertion["verified_at"])
         self.timeout_seconds = settings.get("timeout_seconds", 180)
         self.max_output_bytes = settings.get("max_output_bytes", MAX_OUTPUT_BYTES)
         if (type(self.timeout_seconds) not in (int, float) or not math.isfinite(self.timeout_seconds) or
@@ -229,6 +249,7 @@ class SubscriptionAdapter:
             raise AdapterError("max_output_bytes must be between 512 and 1000000")
         self.config = json.loads(canonical_bytes(config))
         self._preflight = None
+        self._account_assertion = None
 
     def _validate_live_controls(self):
         """Current capabilities gate live work, never historical reproduction."""
@@ -279,23 +300,25 @@ class SubscriptionAdapter:
 
     def preflight(self, worker=None, *, account_assertion=None):
         self._validate_live_controls()
-        assertion = account_assertion if account_assertion is not None else {
-            "extra_usage_disabled": self.config["settings"]["extra_usage_disabled"],
-            "verified_at": self.config["settings"]["extra_usage_verified_at"],
-            "source": self.config["settings"]["extra_usage_source"]}
-        if not isinstance(assertion, dict) or assertion.get("extra_usage_disabled") is not True:
-            raise AdapterError("paid extra usage must be disabled before subscription execution")
-        _text(assertion.get("source"), "account assertion source")
-        checked = _timestamp(assertion.get("verified_at"))
-        age = (datetime.now(timezone.utc) - checked).total_seconds()
-        if not 0 <= age <= 86400:
-            raise AdapterError("extra usage disabled assertion must be verified within the last 24 hours")
+        assertion = account_assertion if account_assertion is not None else self.initial_account_assertion
+        try:
+            check_assertion_fresh(assertion)
+            if account_assertion is None and assertion.get("schema_version") == 2:
+                from .budget import _private_file
+                if not _private_file(Path(self.account_check_file)):
+                    raise SubscriptionAssertionError("private account policy evidence is required")
+                with Path(self.account_check_file).open("rb") as source:
+                    evidence = source.read(MAX_OUTPUT_BYTES + 1)
+                if not 1 <= len(evidence) <= MAX_OUTPUT_BYTES or digest(evidence) != assertion["account_check_sha256"]:
+                    raise SubscriptionAssertionError("account policy evidence hash or size mismatch")
+        except (SubscriptionAssertionError, OSError, KeyError, TypeError) as exc:
+            if assertion.get("schema_version") != 2 and ("expired" in str(exc) or "future" in str(exc)):
+                raise AdapterError("extra usage disabled assertion must be verified within the last 24 hours") from exc
+            raise AdapterError(str(exc)) from exc
         attestation = (worker or SubscriptionCLIWorker()).preflight(self)
-        attestation = {**attestation, "extra_usage_guard": {
-            "disabled": True, "verification": "operator_assertion", "source": assertion["source"],
-            "verified_at": assertion["verified_at"],
-            **{key: assertion[key] for key in ("revision", "assertion_id", "expires_at") if key in assertion}}}
+        attestation = {**attestation, "extra_usage_guard": assertion_guard(assertion)}
         self._preflight = attestation
+        self._account_assertion = json.loads(canonical_bytes(assertion))
         return attestation
 
     def dispatch(self, prepared, worker=None):
@@ -307,6 +330,14 @@ class SubscriptionAdapter:
         checked = _timestamp(self._preflight["extra_usage_guard"]["verified_at"])
         if not 0 <= (datetime.now(timezone.utc) - checked).total_seconds() <= 86400:
             raise AdapterError("account assertion expired after preflight; dispatch refused")
+        if self._account_assertion is not None:
+            try:
+                check_assertion_fresh(self._account_assertion)
+            except SubscriptionAssertionError as exc:
+                raise AdapterError(str(exc)) from exc
+            if paid_credit_approved(self._account_assertion) and any(key not in self._account_assertion for key in
+                    ("scope", "run_sha256", "config_id", "configuration_sha256", "adapter", "revision", "assertion_id")):
+                raise AdapterError("paid credits require an exact run-bound admitted policy")
         body = json.loads(prepared.body)
         if (body.get("model") != self.model or body.get("effort") != self.effort or
                 body.get("request_id") != prepared.request_id):
@@ -377,7 +408,7 @@ class SubscriptionAdapter:
                 for e in events)
         return info
 
-    def parse(self, result, *, expected_request_id, expected_ids, expected_model):
+    def parse(self, result, *, expected_request_id, expected_ids, expected_model, account_assertion=None):
         if expected_model != self.model:
             raise AdapterError("requested model mismatch")
         try:
@@ -388,6 +419,19 @@ class SubscriptionAdapter:
         usage, response_id, returned, finish, predictions = None, None, None, None, ()
         failure = result.error or result.truncated or envelope["returncode"] != 0 or envelope.get("encoding_error")
         reason = "incomplete or failed CLI process" if failure else None
+        paid_approved = False
+        if account_assertion is not None:
+            try:
+                _assertion(assertion_fields(account_assertion))
+                policy_match = envelope.get("preflight", {}).get("extra_usage_guard") == assertion_guard(account_assertion)
+                if account_assertion.get("schema_version") == 2 and not policy_match:
+                    reason = "CLI billing policy receipt mismatch"
+                paid_approved = paid_credit_approved(account_assertion) and policy_match
+            except (SubscriptionAssertionError, KeyError, TypeError):
+                reason = "CLI billing policy receipt mismatch"
+        if account_assertion is not None and account_assertion.get("schema_version") == 2:
+            info["paid_credit_authorized"] = paid_approved
+            info["admitted_extra_usage_guard"] = assertion_guard(account_assertion)
         if self.kind == "claude_code":
             completed = [e for e in events if e.get("type") == "result"]
             final = completed[-1] if len(completed) == 1 else {}
@@ -408,7 +452,7 @@ class SubscriptionAdapter:
                     init.get("mcp_servers") or init.get("skills") or not plugins_safe or
                     init.get("apiKeySource") not in (None, "none")):
                 reason = "CLI context, tool or authentication isolation violation"
-            elif info["overage_observed"]:
+            elif info["overage_observed"] and not paid_approved:
                 reason = "paid extra usage observed"
             elif any(model != self.model for model in models):
                 reason = "returned model mismatch"
@@ -695,9 +739,7 @@ print(json.dumps({'capsule': read(sys.argv[1]), 'reference': read(sys.argv[2]),
         return {"cli_version": observed, "cli_sha256": digest(Path(adapter.executable).read_bytes()),
                 "help_sha256": digest(help_result.stdout), "authentication": authentication,
                 "isolation": isolation,
-                "extra_usage_guard": {"disabled": True, "verification": "operator_assertion",
-                    "source": adapter.config["settings"]["extra_usage_source"],
-                    "verified_at": adapter.config["settings"]["extra_usage_verified_at"]},
+                "extra_usage_guard": assertion_guard(adapter.initial_account_assertion),
                 "supported_controls": list(required), "requested_model": adapter.model,
                 "requested_effort": adapter.effort, "model_availability": "not exposed by read-only CLI",
                 "monetary_bound": None, "accounting_currency": "REQ"}

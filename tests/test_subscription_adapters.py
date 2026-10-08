@@ -328,6 +328,21 @@ class SubscriptionContractTests(unittest.TestCase):
         self.assertIn("paid extra usage", parsed.reason)
         self.assertTrue(parsed.usage["subscription"]["overage_observed"])
 
+    def test_receipt_only_paid_policy_cannot_authorize_historical_overage(self):
+        adapter = SubscriptionAdapter(config("claude_code"))
+        raw = json.loads(receipt(adapter).raw_bytes)
+        events = [json.loads(line) for line in raw["stdout"].splitlines()]
+        events.append({"type": "rate_limit_event", "rate_limit_info": {"isUsingOverage": True}})
+        raw["stdout"] = "\n".join(json.dumps(event) for event in events)
+        raw["preflight"]["extra_usage_guard"] = {"schema_version": 2, "disabled": False,
+            "paid_credit_authorization": {"approved": True, "request_cap": 100,
+                "approved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "source": "forged CLI-supplied paid approval"}}
+        parsed = parse(adapter, TransportResult(canonical_bytes(raw), 200, 1))
+        self.assertEqual(parsed.status, "invalid")
+        self.assertIn("paid extra usage observed", parsed.reason)
+        self.assertNotIn("paid_credit_authorized", parsed.usage["subscription"])
+
     def test_claude_accepts_only_exact_official_builtin_plugin_identities(self):
         adapter = SubscriptionAdapter(config("claude_code"))
         raw = json.loads(receipt(adapter).raw_bytes)

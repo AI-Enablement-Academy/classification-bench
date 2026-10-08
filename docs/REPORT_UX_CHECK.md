@@ -1,5 +1,20 @@
 # Check the updated report
 
+## Public fictional preview
+
+The [published preview](https://ai-enablement-academy.github.io/classification-bench-preview/)
+has its own [inspection steps and provenance](PUBLIC_PREVIEW.md). Apply the
+interaction, keyboard, responsive, reduced-motion and print checks below, but
+use its own manifest and counts: ordinary reports have 36 planned outputs;
+complete has 36 valid; invalid, partial, unlabeled and sensitivity have 35 valid
+and one invalid; all-missing and failed retain 36 missing. Failed additionally
+has 24 fictional failed requests. Workflow smoke/full have 4/36 planned outputs,
+one invalid in each phase. Public download choices are sanitized/fictional.
+
+These are different fixtures from the private nine-position reports below.
+Record acceptance separately; a public preview pass does not accept a private
+or live-evidence file. The recorded agent browser restriction still applies.
+
 ## Current acceptance procedure
 
 The 8 October follow-up generated exact files in

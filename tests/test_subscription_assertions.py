@@ -363,5 +363,184 @@ class SubscriptionAssertionTests(unittest.TestCase):
             self.ledger.current(*self.key)
 
 
+    def paid_renewal(self, *, state=False, cap=5, approval=True, **kwargs):
+        terms, evidence = self.renewal(**kwargs)
+        terms.update(schema_version=2, extra_usage_disabled=state,
+                     paid_credit_authorization={"approved": True, "request_cap": cap,
+                        "approved_at": timestamp(self.now - timedelta(days=2)),
+                        "source": "explicit human paid credit approval; offline fixture"} if approval else None)
+        evidence = json.dumps({"fixture": True, "extra_usage_disabled": state,
+                               "verified_at": terms["verified_at"],
+                               "approval": terms["paid_credit_authorization"]}, sort_keys=True).encode()
+        terms["account_check_sha256"] = digest(evidence)
+        return terms, evidence
+
+    def test_v2_enabled_and_unknown_require_explicit_paid_approval(self):
+        self.bind()
+        for state in (False,):
+            with self.subTest(state=state):
+                terms, evidence = self.paid_renewal(state=state)
+                guard = self.ledger.renew(terms, evidence)
+                with self.execution.coordinator._transaction() as conn:
+                    self.assertEqual(self.ledger.require_fresh_in(conn, self.key), guard)
+                self.assertEqual(guard["extra_usage_disabled"], state)
+                self.assertIsNotNone(guard["paid_credit_authorization_ref"])
+                # A fresh observation can explicitly return to deny policy.
+                terms, evidence = self.paid_renewal(state=state, approval=False,
+                    renewal_id=f"deny-{state}", expected_revision=guard["revision"],
+                    checked_at=self.now + timedelta(microseconds=10))
+                with patch.object(self.module, "_now", return_value=self.now + timedelta(seconds=1)):
+                    denied = self.ledger.renew(terms, evidence)
+                    with self.execution.coordinator._transaction() as conn:
+                        with self.assertRaisesRegex(self.error, "disabled or explicitly authorized"):
+                            self.ledger.require_fresh_in(conn, self.key)
+                self.assertIsNone(denied["paid_credit_authorization"])
+
+    def test_v2_unknown_account_state_and_standing_approval_survive_observation_renewal(self):
+        self.bind()
+        first = self.ledger.renew(*self.paid_renewal(state=None))
+        terms, evidence = self.paid_renewal(state=None, renewal_id="new-observation", expected_revision=1,
+            checked_at=self.now + timedelta(days=3))
+        terms["paid_credit_authorization"] = first["paid_credit_authorization"]
+        with patch.object(self.module, "_now", return_value=self.now + timedelta(days=3)):
+            second = self.ledger.renew(terms, evidence)
+            with self.execution.coordinator._transaction() as conn:
+                self.assertEqual(self.ledger.require_fresh_in(conn, self.key), second)
+        self.assertEqual(second["paid_credit_authorization_ref"], first["paid_credit_authorization_ref"])
+        self.assertNotEqual(second["account_check_ref"], first["account_check_ref"])
+        self.assertEqual(self.ledger.history(self.key)[0]["schema_version"], 1)
+
+    def test_v2_paid_cap_increase_requires_new_explicit_approval(self):
+        self.bind()
+        first = self.ledger.renew(*self.paid_renewal())
+        self.budget.increase_cap(self.key[0], "raise-cap", 5, 7, "separate request-cap authorization")
+        with self.execution.coordinator._transaction() as conn:
+            with self.assertRaisesRegex(self.error, "request cap exceeds paid credit approval"):
+                self.ledger.require_fresh_in(conn, self.key)
+        terms, evidence = self.paid_renewal(cap=7, renewal_id="raise-paid-cap", expected_revision=1,
+            checked_at=self.now + timedelta(seconds=1))
+        with patch.object(self.module, "_now", return_value=self.now + timedelta(seconds=1)):
+            with self.assertRaisesRegex(self.error, "newer explicit approval"):
+                self.ledger.renew(terms, evidence)
+            terms["paid_credit_authorization"]["approved_at"] = timestamp(self.now)
+            second = self.ledger.renew(terms, evidence)
+            with self.execution.coordinator._transaction() as conn:
+                self.assertEqual(self.ledger.require_fresh_in(conn, self.key), second)
+        self.assertNotEqual(first["paid_credit_authorization_ref"], second["paid_credit_authorization_ref"])
+
+    def test_revoked_approval_cannot_return_after_multiple_deny_observations(self):
+        self.bind()
+        with patch.object(self.module, "_now", return_value=self.now):
+            first = self.ledger.renew(*self.paid_renewal(state=None))
+        for revision in (1, 2):
+            denial_time = self.now + timedelta(seconds=revision)
+            terms, evidence = self.paid_renewal(state=None, approval=False,
+                renewal_id=f"deny-{revision}", expected_revision=revision, checked_at=denial_time)
+            with patch.object(self.module, "_now", return_value=denial_time):
+                self.ledger.renew(terms, evidence)
+        terms, evidence = self.paid_renewal(state=None, renewal_id="reapprove", expected_revision=3,
+            checked_at=self.now + timedelta(seconds=3))
+        terms["paid_credit_authorization"] = deepcopy(first["paid_credit_authorization"])
+        with patch.object(self.module, "_now", return_value=self.now + timedelta(seconds=3)):
+            # Neither the withdrawn approval nor one between the two denials
+            # covers an observation recorded after the latest withdrawal.
+            for approved_at in (first["paid_credit_authorization"]["approved_at"],
+                                timestamp(self.now + timedelta(seconds=1, microseconds=1)),
+                                timestamp(self.now + timedelta(seconds=2))):
+                terms["paid_credit_authorization"]["approved_at"] = approved_at
+                with self.subTest(approved_at=approved_at), self.assertRaisesRegex(self.error, "after denial"):
+                    self.ledger.renew(terms, evidence)
+            self.assertEqual(len(self.ledger.history(self.key)), 4)
+            with self.execution.coordinator._transaction() as conn:
+                with self.assertRaisesRegex(self.error, "disabled or explicitly authorized"):
+                    self.ledger.require_fresh_in(conn, self.key)
+            terms["paid_credit_authorization"]["approved_at"] = timestamp(self.now + timedelta(seconds=3))
+            fresh = self.ledger.renew(terms, evidence)
+            with self.execution.coordinator._transaction() as conn:
+                self.assertEqual(self.ledger.require_fresh_in(conn, self.key), fresh)
+        self.assertNotEqual(fresh["paid_credit_authorization_ref"], first["paid_credit_authorization_ref"])
+
+    def test_v1_deny_after_paid_permission_requires_fresh_reapproval(self):
+        self.bind()
+        with patch.object(self.module, "_now", return_value=self.now):
+            first = self.ledger.renew(*self.paid_renewal())
+        terms, evidence = self.renewal(renewal_id="legacy-deny", expected_revision=1,
+            checked_at=self.now + timedelta(seconds=1))
+        with patch.object(self.module, "_now", return_value=self.now + timedelta(seconds=1)):
+            self.ledger.renew(terms, evidence)
+        terms, evidence = self.paid_renewal(renewal_id="reapprove", expected_revision=2,
+            checked_at=self.now + timedelta(seconds=2))
+        terms["paid_credit_authorization"] = deepcopy(first["paid_credit_authorization"])
+        with patch.object(self.module, "_now", return_value=self.now + timedelta(seconds=2)):
+            with self.assertRaisesRegex(self.error, "after denial"):
+                self.ledger.renew(terms, evidence)
+            terms["paid_credit_authorization"]["approved_at"] = timestamp(self.now + timedelta(seconds=2))
+            self.ledger.renew(terms, evidence)
+
+    def test_uninterrupted_changed_terms_cannot_restore_older_approval(self):
+        self.bind()
+        with patch.object(self.module, "_now", return_value=self.now):
+            first = self.ledger.renew(*self.paid_renewal())
+        terms, evidence = self.paid_renewal(renewal_id="approval-b", expected_revision=1,
+            checked_at=self.now + timedelta(seconds=1))
+        terms["paid_credit_authorization"]["source"] = "new explicit human permission B; offline fixture"
+        terms["paid_credit_authorization"]["approved_at"] = timestamp(self.now)
+        with patch.object(self.module, "_now", return_value=self.now + timedelta(seconds=1)):
+            second = self.ledger.renew(terms, evidence)
+        terms, evidence = self.paid_renewal(renewal_id="changed-terms", expected_revision=2,
+            checked_at=self.now + timedelta(seconds=2))
+        with patch.object(self.module, "_now", return_value=self.now + timedelta(seconds=2)):
+            for approval in (deepcopy(first["paid_credit_authorization"]),
+                             {**second["paid_credit_authorization"], "request_cap": 6},
+                             {**second["paid_credit_authorization"], "source": "different source with same time"}):
+                terms["paid_credit_authorization"] = approval
+                with self.subTest(approval=approval), self.assertRaisesRegex(self.error, "newer explicit approval"):
+                    self.ledger.renew(terms, evidence)
+        self.assertEqual(self.ledger.current(*self.key), second)
+
+    def test_v2_rejects_forged_or_implicit_paid_approval(self):
+        self.bind()
+        for mutation in ({"approved": 1}, {"approved": False}, {"request_cap": True},
+                         {"request_cap": 0}, {"source": ""},
+                         {"approved_at": timestamp(self.now + timedelta(days=1))}):
+            with self.subTest(mutation=mutation):
+                terms, evidence = self.paid_renewal()
+                terms["paid_credit_authorization"].update(mutation)
+                with self.assertRaises(self.error):
+                    self.ledger.renew(terms, evidence)
+        terms, evidence = self.paid_renewal(cap=4)
+        with self.assertRaisesRegex(self.error, "request cap exceeds"):
+            self.ledger.renew(terms, evidence)
+        self.assertEqual(len(self.ledger.history(self.key)), 1)
+
+    def test_admitted_historical_policy_cannot_be_reinterpreted_after_approval(self):
+        original = self.bind({**self.initial, "verified_at": timestamp(self.now - timedelta(seconds=1))})
+        claim = self.claim()
+        def guard(conn):
+            self.ledger.require_fresh_in(conn, self.key, 0, request_id=claim["request_id"], admission_token=claim["token"])
+        self.execution.admit(claim["request_id"], claim["token"], MANIFEST, INPUT,
+                             self.key[0], 1, admission_guard=guard, bound_source="offline fixture REQ grant")
+        self.ledger.renew(*self.paid_renewal(state=None))
+        admitted = self.ledger.admitted_assertion(claim["request_id"], claim["token"])
+        self.assertEqual(admitted, original)
+        self.assertFalse(self.module.paid_credit_approved(admitted))
+        with self.assertRaisesRegex(self.error, "exact admitted request"):
+            self.ledger.admitted_assertion(claim["request_id"], "wrong-token")
+
+    def test_v2_initial_evidence_is_bound_private_and_optional_for_restart(self):
+        terms, evidence = self.paid_renewal(state=None)
+        assertion = self.module.assertion_fields(terms)
+        path = self.root / "initial-check.json"
+        path.write_bytes(evidence)
+        path.chmod(0o600)
+        guard = self.ledger.bind_initial(*self.key, CONFIG, "codex", assertion, account_check_path=path)
+        path.unlink()
+        self.assertEqual(self.ledger.bind_initial(*self.key, CONFIG, "codex", assertion), guard)
+        with self.execution.coordinator._transaction() as conn:
+            self.assertEqual(self.ledger.require_fresh_in(conn, self.key), guard)
+        self.assertEqual(self.module.SubscriptionAssertionLedger.read_current(
+            self.root / "run.sqlite", self.root / "artifacts", self.key), guard)
+
+
 if __name__ == "__main__":
     unittest.main()

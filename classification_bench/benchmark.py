@@ -688,13 +688,13 @@ def _record_subscription_block(verified, material, observation):
     parsed = observation["parsed"]
     evidence = (parsed.get("usage") or {}).get("subscription") or {}
     reason = None
-    if evidence.get("overage_observed"):
+    if evidence.get("overage_observed") and evidence.get("paid_credit_authorized") is not True:
         reason = "subscription paid extra usage observed"
     elif evidence.get("quota_exhausted"):
         reason = "subscription quota exhausted"
     elif parsed.get("reason") in (
             "CLI context, tool or authentication isolation violation",
-            "CLI tool isolation violation", "returned model mismatch"):
+            "CLI tool isolation violation", "returned model mismatch", "CLI billing policy receipt mismatch"):
         reason = parsed["reason"]
     if reason:
         verified.execution.block_scope(material["scope"], reason, observation["response_sha256"])
@@ -747,9 +747,10 @@ def _execute_one(config, material, verified, claim, refs, api_key, worker):
             raise BenchmarkError("published response changed between transport and receipt")
         # Original bounded response is now durable; only then parse it.
         try:
+            policy_args = {"account_assertion": assertions.admitted_assertion(request_id, token)} if admission_guard else {}
             parsed = runtime.parse(adapter, result, expected_request_id=material.get("logical_request_id", request_id),
                                    expected_ids=prepared.expected_ids,
-                                   expected_model=material["config"]["model"])
+                                   expected_model=material["config"]["model"], **policy_args)
         except Exception as exc:
             parsed = ParsedResponse("invalid", (), None, None, None, None, None, None,
                                     f"parser error: {type(exc).__name__}")
@@ -813,10 +814,15 @@ def _recover_one(verified, material, *, max_objects):
             prepared = material["prepared"]
             adapter = material["adapter"]
             try:
+                policy_args = {}
+                if getattr(material["runtime"], "requires_account_assertion", False):
+                    from .subscription_assertions import SubscriptionAssertionLedger
+                    policy_args["account_assertion"] = SubscriptionAssertionLedger(
+                        verified.execution, verified.artifact_root).admitted_assertion(request_id, token)
                 parsed = material["runtime"].parse(
                     adapter, result, expected_request_id=material.get("logical_request_id", request_id),
                     expected_ids=prepared.expected_ids,
-                    expected_model=material["config"]["model"])
+                    expected_model=material["config"]["model"], **policy_args)
             except Exception as exc:
                 parsed = ParsedResponse("invalid", (), None, None, None, None, None,
                                         None, f"parser error: {type(exc).__name__}")
@@ -881,9 +887,10 @@ def _initialize(config, binding, materials):
                 continue
             seen.add(cfg["id"])
             settings = cfg["settings"]
+            current_adapter = material["adapter"]
             assertions.bind_initial(config["scope"], binding, cfg["id"], digest(canonical_bytes(cfg)),
-                                    settings["adapter"], {"extra_usage_disabled": settings["extra_usage_disabled"],
-                                    "verified_at": settings["extra_usage_verified_at"], "source": settings["extra_usage_source"]})
+                                    settings["adapter"], current_adapter.initial_account_assertion,
+                                    account_check_path=current_adapter.account_check_file)
     return verified
 
 

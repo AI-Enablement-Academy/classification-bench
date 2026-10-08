@@ -23,12 +23,14 @@ class SubscriptionAssertionError(ValueError):
 
 
 ASSERTION_KEYS = {"extra_usage_disabled", "verified_at", "source"}
+ASSERTION_V2_KEYS = ASSERTION_KEYS | {"schema_version", "paid_credit_authorization", "account_check_sha256"}
 RENEWAL_KEYS = {"schema_version", "renewal_id", "run_sha256", "scope", "config_id",
                 "configuration_sha256", "adapter", "expected_revision", "extra_usage_disabled",
                 "verified_at", "source", "account_check_sha256"}
 MAX_ACCOUNT_CHECK_BYTES = 1_000_000
 _UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
+PAID_APPROVAL_KEYS = {"approved", "request_cap", "approved_at", "source"}
 
 
 def _now():
@@ -58,12 +60,63 @@ def _checked_time(value):
 
 
 def _assertion(value):
-    if not isinstance(value, dict) or set(value) != ASSERTION_KEYS:
-        raise SubscriptionAssertionError("initial assertion must use exact v1 assertion fields")
-    if value["extra_usage_disabled"] is not True:
-        raise SubscriptionAssertionError("paid extra usage disabled assertion must be true")
+    if not isinstance(value, dict):
+        raise SubscriptionAssertionError("initial assertion must use exact versioned assertion fields")
+    if set(value) == ASSERTION_KEYS:
+        if value["extra_usage_disabled"] is not True:
+            raise SubscriptionAssertionError("paid extra usage disabled assertion must be true")
+    elif set(value) == ASSERTION_V2_KEYS and type(value["schema_version"]) is int and value["schema_version"] == 2:
+        if value["extra_usage_disabled"] is not None and type(value["extra_usage_disabled"]) is not bool:
+            raise SubscriptionAssertionError("extra usage state must be true, false or null (unknown)")
+        _sha(value["account_check_sha256"], "account_check_sha256")
+        approval = value["paid_credit_authorization"]
+        if approval is not None:
+            if not isinstance(approval, dict) or set(approval) != PAID_APPROVAL_KEYS or approval["approved"] is not True:
+                raise SubscriptionAssertionError("paid credits require an explicit true approval with exact fields")
+            if type(approval["request_cap"]) is not int or approval["request_cap"] < 1:
+                raise SubscriptionAssertionError("paid credit request_cap must be a positive integer")
+            _text(approval["source"], "paid credit approval source")
+            _checked_time(approval["approved_at"])
+    else:
+        raise SubscriptionAssertionError("initial assertion must use exact versioned assertion fields")
     _text(value["source"], "source")
     return _checked_time(value["verified_at"])
+
+
+def assertion_fields(record):
+    """Extract policy without altering the bytes of legacy assertion records."""
+    keys = ASSERTION_V2_KEYS if record.get("schema_version") == 2 else ASSERTION_KEYS
+    return {name: record[name] for name in keys}
+
+
+def paid_credit_approved(record):
+    return record.get("schema_version") == 2 and record.get("paid_credit_authorization") is not None
+
+
+def assertion_guard(record):
+    """Receipt policy; a v1 guard retains its original exact shape."""
+    guard = {"disabled": record["extra_usage_disabled"], "verification": "operator_assertion",
+             "source": record["source"], "verified_at": record["verified_at"],
+             **{key: record[key] for key in ("revision", "assertion_id", "expires_at") if key in record}}
+    if record.get("schema_version") == 2:
+        guard.update(schema_version=2, paid_credit_authorization=record["paid_credit_authorization"],
+                     account_check_sha256=record["account_check_sha256"],
+                     **{key: record[key] for key in ("scope", "run_sha256", "config_id", "configuration_sha256", "adapter", "paid_credit_authorization_ref") if key in record})
+    return guard
+
+
+def check_assertion_fresh(record, *, require_execution=True):
+    checked = _assertion(assertion_fields(record))
+    age = (_now() - checked).total_seconds()
+    if age < 0:
+        raise SubscriptionAssertionError("account assertion is in the future")
+    if age > 86400:
+        raise SubscriptionAssertionError("account assertion expired; supply a fresh actual account check")
+    if paid_credit_approved(record):
+        if _checked_time(record["paid_credit_authorization"]["approved_at"]) > _now():
+            raise SubscriptionAssertionError("paid credit approval is in the future")
+    elif require_execution and record["extra_usage_disabled"] is not True:
+        raise SubscriptionAssertionError("paid extra usage must be disabled or explicitly authorized")
 
 
 def _key(key):
@@ -179,11 +232,19 @@ class SubscriptionAssertionLedger:
             if any(record[key] != row[key] for key in
                    ("scope", "run_sha256", "config_id", "revision", "configuration_sha256", "adapter", "renewal_id")):
                 raise SubscriptionAssertionError("subscription assertion record binding mismatch")
+            _assertion(assertion_fields(record))
             reference = record["account_check_ref"]
             if reference is not None:
                 if not _private_file(self.artifact_root / reference["path"]):
                     raise SubscriptionAssertionError("private account check evidence is missing")
                 read_artifact(self.artifact_root, ArtifactRef(**reference))
+            if record.get("schema_version") == 2 and (reference is None or reference["sha256"] != record["account_check_sha256"]):
+                raise SubscriptionAssertionError("v2 account policy requires its exact retained evidence")
+            if paid_credit_approved(record):
+                approval_ref = record["paid_credit_authorization_ref"]
+                if not _private_file(self.artifact_root / approval_ref["path"]):
+                    raise SubscriptionAssertionError("private paid credit approval evidence is missing")
+                read_artifact(self.artifact_root, ArtifactRef(**approval_ref))
             return record
         except (KeyError, TypeError, ValueError, EvidenceError, BudgetError) as exc:
             if isinstance(exc, SubscriptionAssertionError):
@@ -213,7 +274,7 @@ class SubscriptionAssertionLedger:
             + (canonical_bytes(record).decode("utf-8"),))
         return record
 
-    def bind_initial(self, scope, run_sha256, config_id, configuration_sha256, adapter, assertion):
+    def bind_initial(self, scope, run_sha256, config_id, configuration_sha256, adapter, assertion, *, account_check_path=None):
         """Retain original assertion terms, including expired historical checks."""
         key = _key((scope, run_sha256, config_id))
         _sha(configuration_sha256, "configuration_sha256")
@@ -232,28 +293,49 @@ class SubscriptionAssertionLedger:
                 return original
             if checked > _now():
                 raise SubscriptionAssertionError("initial account assertion is in the future")
+            reference = None
+            if assertion.get("schema_version") == 2:
+                self._paid_cap_in(conn, key, assertion)
+                if paid_credit_approved(assertion) and _checked_time(assertion["paid_credit_authorization"]["approved_at"]) > _now():
+                    raise SubscriptionAssertionError("paid credit approval is in the future")
+                try:
+                    if account_check_path is None or not _private_file(Path(account_check_path)):
+                        raise SubscriptionAssertionError("private initial account policy evidence is required")
+                    with Path(account_check_path).open("rb") as source:
+                        evidence = source.read(MAX_ACCOUNT_CHECK_BYTES + 1)
+                    if not 1 <= len(evidence) <= MAX_ACCOUNT_CHECK_BYTES or digest(evidence) != assertion["account_check_sha256"]:
+                        raise SubscriptionAssertionError("initial account policy evidence hash or size mismatch")
+                    reference = put_artifact(self.artifact_root, evidence, "application/json")
+                    read_artifact(self.artifact_root, reference)
+                except (OSError, EvidenceError) as exc:
+                    raise SubscriptionAssertionError("initial account policy evidence cannot be preserved") from exc
             return self._insert_in(conn, {
                 "schema_version": 1, "scope": scope, "run_sha256": run_sha256, "config_id": config_id,
                 "configuration_sha256": configuration_sha256, "adapter": adapter, "revision": 0,
                 "renewal_id": None, "previous_assertion_id": None,
                 "initial_assertion_sha256": digest(canonical_bytes(assertion)), "authorization_sha256": None,
                 **assertion, "expires_at": (checked + timedelta(days=1)).isoformat().replace("+00:00", "Z"),
-                "account_check_ref": None, "origin": "frozen_initial_assertion",
+                "account_check_ref": asdict(reference) if reference else None, "origin": "frozen_initial_assertion",
+                **({"paid_credit_authorization_ref": asdict(reference) if paid_credit_approved(assertion) else None}
+                   if assertion.get("schema_version") == 2 else {}),
                 "verification": "operator_assertion", "verification_limit": "not independently verified; no remote billing check",
                 "recorded_at": _now().isoformat().replace("+00:00", "Z")})
 
     def renew(self, authorization, account_check_bytes, *, media_type="application/json"):
         """Append one run-bound fresh check; identical retry preserves its record."""
-        if (not isinstance(authorization, dict) or set(authorization) != RENEWAL_KEYS or
-                type(authorization.get("schema_version")) is not int or authorization["schema_version"] != 1):
-            raise SubscriptionAssertionError("renewal authorization must use exact v1 fields")
+        version = authorization.get("schema_version") if isinstance(authorization, dict) else None
+        keys = RENEWAL_KEYS | {"paid_credit_authorization"} if version == 2 else RENEWAL_KEYS
+        if (not isinstance(authorization, dict) or set(authorization) != keys or
+                type(version) is not int or version not in (1, 2)):
+            raise SubscriptionAssertionError("renewal authorization must use exact v1 or v2 fields")
         key = _key(tuple(authorization[name] for name in ("scope", "run_sha256", "config_id")))
         _text(authorization["renewal_id"], "renewal_id")
         _sha(authorization["configuration_sha256"], "configuration_sha256")
         _sha(authorization["account_check_sha256"], "account_check_sha256")
         if type(authorization["expected_revision"]) is not int or authorization["expected_revision"] < 0:
             raise SubscriptionAssertionError("expected_revision must be a nonnegative integer")
-        checked = _assertion({name: authorization[name] for name in ASSERTION_KEYS})
+        policy = assertion_fields(authorization)
+        checked = _assertion(policy)
         if (not isinstance(account_check_bytes, bytes) or not 1 <= len(account_check_bytes) <= MAX_ACCOUNT_CHECK_BYTES or
                 digest(account_check_bytes) != authorization["account_check_sha256"]):
             raise SubscriptionAssertionError("account check evidence bytes do not match the bounded declared SHA-256")
@@ -274,7 +356,24 @@ class SubscriptionAssertionLedger:
                 raise SubscriptionAssertionError("renewal configuration or adapter binding changed")
             if authorization["expected_revision"] != current["revision"]:
                 raise SubscriptionAssertionError("stale subscription assertion revision")
-            self._fresh(authorization)
+            check_assertion_fresh(authorization, require_execution=False)
+            self._paid_cap_in(conn, key, authorization)
+            approval = authorization.get("paid_credit_authorization")
+            prior_approval = current.get("paid_credit_authorization")
+            if approval is not None and prior_approval is None:
+                last_paid = next((row for row in reversed(history) if paid_credit_approved(row)), None)
+                if last_paid is not None:
+                    # A fresh account observation cannot resurrect permission
+                    # withdrawn by any later v1 or v2 deny revision. Recording
+                    # time marks the withdrawal, independently of check age.
+                    revoked_after = max(
+                        _checked_time(last_paid["paid_credit_authorization"]["approved_at"]),
+                        *(_checked_time(row["recorded_at"]) for row in history[last_paid["revision"] + 1:]))
+                    if _checked_time(approval["approved_at"]) <= revoked_after:
+                        raise SubscriptionAssertionError("revoked paid credit permission requires a newer explicit approval after denial")
+            if approval is not None and prior_approval is not None and approval != prior_approval:
+                if _checked_time(approval["approved_at"]) <= _checked_time(prior_approval["approved_at"]):
+                    raise SubscriptionAssertionError("changed paid credit terms require a newer explicit approval")
             if checked <= _checked_time(current["verified_at"]):
                 raise SubscriptionAssertionError("renewal requires a newer actual account check")
             try:
@@ -283,25 +382,45 @@ class SubscriptionAssertionLedger:
             except EvidenceError as exc:
                 raise SubscriptionAssertionError("account check evidence could not be preserved") from exc
             return self._insert_in(conn, {
-                "schema_version": 1, "scope": key[0], "run_sha256": key[1], "config_id": key[2],
+                "schema_version": version, "scope": key[0], "run_sha256": key[1], "config_id": key[2],
                 "configuration_sha256": current["configuration_sha256"], "adapter": current["adapter"],
                 "revision": current["revision"] + 1, "renewal_id": authorization["renewal_id"],
                 "previous_assertion_id": current["assertion_id"],
                 "initial_assertion_sha256": current["initial_assertion_sha256"], "authorization_sha256": authorization_sha,
-                **{name: authorization[name] for name in ASSERTION_KEYS},
+                **policy,
                 "expires_at": (checked + timedelta(days=1)).isoformat().replace("+00:00", "Z"),
                 "account_check_ref": asdict(reference), "origin": "operator_supplied_renewal",
+                **({"paid_credit_authorization_ref": (
+                    current["paid_credit_authorization_ref"] if approval is not None and approval == prior_approval else
+                    asdict(reference) if approval is not None else None)} if version == 2 else {}),
                 "verification": "operator_assertion", "verification_limit": "not independently verified; no remote billing check",
                 "recorded_at": _now().isoformat().replace("+00:00", "Z")})
 
     @staticmethod
     def _fresh(record):
-        checked = _assertion({name: record[name] for name in ASSERTION_KEYS})
-        age = (_now() - checked).total_seconds()
-        if age < 0:
-            raise SubscriptionAssertionError("account assertion is in the future")
-        if age > 86400:
-            raise SubscriptionAssertionError("account assertion expired; supply a fresh actual account check")
+        check_assertion_fresh(record)
+
+    def _paid_cap_in(self, conn, key, record):
+        if paid_credit_approved(record):
+            budget = self.execution.budget._scope(conn, key[0])
+            if budget["cap"] > record["paid_credit_authorization"]["request_cap"]:
+                raise SubscriptionAssertionError("request cap exceeds paid credit approval; renew approval after a cap increase")
+
+    def admitted_assertion(self, request_id, admission_token):
+        """Recover the exact historic policy, without rechecking current freshness."""
+        with self.execution.coordinator._transaction() as conn:
+            audit = conn.execute("SELECT * FROM subscription_guard_admissions WHERE request_id=?", (request_id,)).fetchone()
+            if audit is None:
+                return None  # Pre-ledger receipts retain the legacy deny policy.
+            execution = conn.execute("SELECT scope,admission_token FROM execution_requests WHERE request_id=?", (request_id,)).fetchone()
+            if (execution is None or execution["scope"] != audit["scope"] or
+                    execution["admission_token"] != admission_token or audit["admission_token"] != admission_token):
+                raise SubscriptionAssertionError("saved policy does not match the exact admitted request")
+            history = self._history_in(conn, (audit["scope"], audit["run_sha256"], audit["config_id"]))
+            record = next((row for row in history if row["revision"] == audit["revision"]), None)
+            if record is None or record["assertion_id"] != audit["assertion_id"]:
+                raise SubscriptionAssertionError("saved admission policy cannot be verified")
+            return record
 
     def current(self, scope, run_sha256, config_id):
         """Read the latest immutable record; freshness is enforced at admission."""
@@ -330,6 +449,7 @@ class SubscriptionAssertionLedger:
         if expected_revision is not None and (type(expected_revision) is not int or expected_revision != current["revision"]):
             raise SubscriptionAssertionError("subscription assertion revision changed after preflight")
         self._fresh(current)
+        self._paid_cap_in(conn, key, current)
         if (request_id is None) != (admission_token is None):
             raise SubscriptionAssertionError("guard audit requires both storage request_id and admission_token")
         if request_id is not None:
