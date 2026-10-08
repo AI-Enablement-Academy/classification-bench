@@ -8,6 +8,7 @@ from collections import defaultdict
 from copy import deepcopy
 from html import escape
 from itertools import combinations
+import json
 from urllib.parse import urlencode
 
 from .core import _digest
@@ -23,7 +24,7 @@ def evidence_url(run, case=None, compare=None):
     return "#case-explorer-heading?" + urlencode(values)
 
 
-def build_findings(analysis):
+def build_findings(analysis, *, comparative=None):
     """Return deterministic observations and explicitly conditional next steps."""
     findings = []
 
@@ -143,12 +144,18 @@ def build_findings(analysis):
                                  "accepted": pair["accepted"], "planned": pair["planned"],
                                  "tied_pairs": sum(p["accepted"] == pair["accepted"] for p in pairs)}
                                 for boundary, pair in (("minimum", minimum), ("maximum", maximum))]})
+    if comparative is None:
+        from .report_comparisons import build_comparative_findings
+        comparative = build_comparative_findings(analysis)
+    if comparative["analysis_id"] != analysis["analysis_id"] or comparative["source_hashes"] != analysis["source_hashes"]:
+        raise ValueError("comparative findings must match analysis sources")
+    findings.extend(deepcopy(comparative["findings"]))
     return {"schema_version": 1, "analysis_id": analysis["analysis_id"],
             "source_hashes": deepcopy(analysis["source_hashes"]), "findings": findings,
             "scope": "All planned runs; each finding retains its own cases and denominator.",
             "limitations": [analysis["sampling_note"],
                 "No causal explanation, statistical significance, calibration or deployment guarantee is inferred.",
-                "Reasoning, batch-size and cross-model effects require separately controlled comparisons; prompt comparisons hold configuration and repeat fixed.",
+                "Configuration comparisons describe declared differences; a single changed setting does not establish causality. Prompt comparisons hold configuration and repeat fixed.",
                 "Provider timing and client duration are different measurements; unavailable measurements cannot support a latency ranking."]}
 
 
@@ -167,13 +174,15 @@ def render_findings(findings):
             f"<li><a href='{h(evidence_url(p['run_a'], compare=p['run_b']))}'>Inspect {p['boundary']} acceptance boundary</a>: "
             f"{p['accepted']}/{p['planned']} cases; one of {p['tied_pairs']} tied pairs.</li>"
             for p in item["metrics"].get("range_evidence", []))
+        supporting_links = "".join(f"<li><a href='{h(evidence_url(link['run_a'], link.get('case_id'), link.get('run_b')))}'>{h(link['label'])}</a></li>"
+                                   for link in item.get("supporting_links", []))
         support_text = "; ".join(f"{h(label)}: {count}" for label, count in supports.items())
-        items.append(f"<article class='finding' id='finding-{item['finding_id']}'>"
+        items.append(f"<article class='finding' id='finding-{item['finding_id']}' data-finding-runs='{h(json.dumps(item['run_ids']))}'>"
                      f"<h3>{h(item['title'])}</h3><p class='finding-scope'>{h(item['scope'])} · denominator {item['denominator']}</p>"
                      f"<p>{h(item['observation'])}</p>" + (f"<ul>{details}</ul>" if details else "") +
                      (f"<p>Known reference class support: {support_text}. Unobserved classes have no measured performance.</p>" if supports else "") +
                      f"<p><strong>Suggested follow-up:</strong> {h(item['next_step'])}</p>" +
-                     (f"<ul>{range_links}</ul><p>All eligible pairs remain available in the agreement explorer; these boundary links explain the range, not a preferred pair.</p>" if range_links else
+                     (f"<ul>{supporting_links}</ul>" if supporting_links else f"<ul>{range_links}</ul><p>All eligible pairs remain available in the agreement explorer; these boundary links explain the range, not a preferred pair.</p>" if range_links else
                       f"<a href='{h(evidence_url(a, compare=b))}'>Inspect supporting run{' pair' if b else ''}</a>")
                      + (f"<details><summary>Supporting cases ({len(item['case_ids'])})</summary><div class='finding-links'>{links}</div></details>" if links else "") + "</article>")
     return ("<style>.deep-findings .finding{padding:1.5rem 0;border-top:1px solid var(--line,#dcded8)}"

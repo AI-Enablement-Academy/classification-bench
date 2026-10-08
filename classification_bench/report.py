@@ -15,6 +15,8 @@ from .report_exports import build_report_exports, render_downloads
 from .report_presentation import render_presentation
 from .report_sensitivity import build_sensitivity, render_sensitivity
 from .report_visuals import agreement_duration_plot
+from .report_filters import render_report_filters
+from .report_comparisons import build_comparative_findings, render_comparative_findings
 
 
 def _h(value):
@@ -64,6 +66,8 @@ def _adapter_category(settings):
     if adapter in {"liquid_decide", "solar_decide", "qwen_decision",
                    "clef_decide", "clef_flash_decide"}:
         return "Native decisions"
+    if adapter in {"claude_code", "codex"}:
+        return "Claude Code" if adapter == "claude_code" else "Codex"
     if adapter == "synthetic":
         return "Synthetic"
     return "Other declared adapter"
@@ -145,7 +149,7 @@ def _comparison_table(rows):
                 cls = " class='numeric'" if index in (2, 3, 4, 5, 6, 8) else ""
                 cells.append(f"<td{cls}{attrs}>{_h(value)}</td>")
         body.append(f"<tr data-config-id='{_h(entry['config'])}' data-prompt-id='{_h(entry['prompt'])}' "
-                    f"data-prompt='{_h(entry['prompt'])}' "
+                    f"data-prompt='{_h(entry['prompt'])}' data-run-ids='{_h(json.dumps(entry['run_ids']))}' "
                     f"data-category='{_h(entry['category'])}' data-model='{_h(entry['model'])}' "
                     f"data-model-type='{_h(entry['model_type'])}' data-model-type-label='{_h(entry['model_type_label'])}' "
                     f"data-plot-id='{plot_id}' data-plot-state='{entry['plot_state']}' "
@@ -576,6 +580,8 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
     field_metrics = build_field_metrics(analysis)
     metric_runs = {(run["config_id"], run["prompt_id"], run["repeat"]): run
                    for run in field_metrics["runs"].values()}
+    analysis_runs = {(run["config_id"], run["prompt_id"], run["repeat"]): run
+                     for run in analysis["runs"]}
     configs = {x["id"]: x for x in plan["experiment"]["configs"]}
     prompts = {x["id"]: x for x in plan["experiment"]["prompts"]}
     supplied = {(x["config_id"], x["prompt_id"], x["repeat"], x["id"]): x["prediction"]
@@ -648,6 +654,7 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
                 metadata[key] = _display_metadata(_first_metadata(metadata[key], settings.get(key), fallback))
             values = {"task": task["name"], "model": metadata["model"], "provider": metadata["provider"],
                       "effort": metadata["effort"], "prompt": pid, "repeat": str(repeat), "route": metadata["route"]}
+            values["run-id"] = analysis_runs[(cid, pid, repeat)]["run_id"]
             attributes = " ".join(f"data-{key}='{_h(value)}'"
                                   for key, value in values.items())
             field_rows = []
@@ -766,6 +773,8 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
                     if condition_requests else "0/0 planned requests")
         comparison_rows.append({
             "config": cid, "prompt": pid, "model": config["model"],
+            "run_ids": [run["run_id"] for run in analysis["runs"]
+                        if run["config_id"] == cid and run["prompt_id"] == pid],
             "anchor": condition_anchor, "category": _adapter_category(settings),
             "model_type": model_type, "model_type_label": _MODEL_TYPE_LABELS[model_type],
             "plot_state": "reference_unavailable" if not complete_references else "synthetic" if synthetic_timing else "measured" if duration_values else "unavailable",
@@ -819,14 +828,16 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
                      + "".join(rows) + "</article>")
 
     filters = []
-    for key, label in (("task", "Task"), ("model", "Model"), ("provider", "Provider"),
-                       ("effort", "Effort"), ("prompt", "Prompt"), ("repeat", "Pass"), ("route", "Route")):
+    for key, label in (("task", "Task"), ("model", "Requested model"), ("provider", "Requested provider"),
+                       ("effort", "Requested effort"), ("prompt", "Prompt"), ("repeat", "Pass"), ("route", "Requested API route")):
         if key == "task":
             values = [task["name"]]
         else:
             values = sorted({str(value) for value in _filter_values(key, plan, operations)})
         options = "<option value=''>All</option>" + "".join(f"<option value='{_h(v)}'>{_h(v)}</option>" for v in values)
-        filters.append(f"<label>{label} <select data-filter='{key}'>{options}</select></label>")
+        canonical_key = "api_route" if key == "route" else key
+        mirror = f" data-report-filter='{canonical_key}'" if key != "task" else ""
+        filters.append(f"<label>{label} <select data-filter='{key}'{mirror}>{options}</select></label>")
     source_rows = [(name, digest if digest is not None else "unavailable (not supplied)")
                    for name, digest in result["source_hashes"].items()]
     if operations:
@@ -851,31 +862,24 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
         options = "<option value=''>All</option>" + "".join(
             f"<option value='{_h(value)}'>{_h(value)}</option>" for value in values)
         comparison_filters.append(
-            f"<label>{label}<select data-comparison-filter='{key}'>{options}</select></label>")
-    script = """const filters = [...document.querySelectorAll('[data-filter]')];
+            f"<label>{label}<select data-comparison-filter='{key}' data-report-filter='{"api_route" if key == "route" else key}'>{options}</select></label>")
+    script = """window.reportFilters.refreshAliases();
     const passes = [...document.querySelectorAll('.pass')];
+    let filterSnapshot = window.reportFilters.getState();
     function applyFilters() {
-      passes.forEach(section => {
-        section.hidden = filters.some(filter => filter.value && section.dataset[filter.dataset.filter] !== filter.value);
-      });
+      const eligible = new Set(filterSnapshot.eligibleRunIds);
+      passes.forEach(section => { section.hidden = !eligible.has(section.dataset.runId); });
       document.querySelectorAll('article.condition').forEach(article => {
         article.hidden = !article.querySelector('.pass:not([hidden])');
       });
       const visible = passes.filter(section => !section.hidden).length;
-      document.getElementById('filter-status').textContent = `Showing ${visible} of ${passes.length} pass sections.`;
+      document.getElementById('filter-status').textContent = `Showing ${visible} of ${passes.length} pass sections. Shared report filters select whole runs; condition summaries retain all planned repeats.`;
       document.getElementById('filter-empty').hidden = visible !== 0;
     }
-    filters.forEach(select => select.addEventListener('change', applyFilters));
-    document.getElementById('reset-filters').addEventListener('click', () => {
-      filters.forEach(select => { select.value = ''; });
-      applyFilters();
-    });
+    document.getElementById('reset-filters').addEventListener('click', () => window.reportFilters.reset());
     document.querySelectorAll("[data-contents] a[href^='#'], .row-actions a[href^='#'], .duration-point[href^='#'], .plot-key-row a[href^='#']").forEach(link => link.addEventListener('click', () => {
       const target = document.getElementById(link.getAttribute('href').slice(1));
-      if (target && (target.hidden || target.closest('article[hidden]'))) {
-        filters.forEach(select => { select.value = ''; });
-        applyFilters();
-      }
+      if (target && (target.hidden || target.closest('article[hidden]'))) window.reportFilters.reset();
     }));
     const comparisonBody = document.querySelector('.comparison-table tbody');
     const comparisonRows = [...comparisonBody.rows];
@@ -887,16 +891,17 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
     const plotPoints = [...document.querySelectorAll('.duration-point')];
     const plotById = new Map(plotPoints.map(point => [point.dataset.plotId, point]));
     const plotLabels = new Map([...document.querySelectorAll('.plot-key-row')].map(item => [item.dataset.plotId, item]));
-    let activeCategory = '';
-    let activeModelType = '';
     function applyComparisonSearch() {
       const query = comparisonSearch.value.trim().toLocaleLowerCase();
       let visible = 0;
       comparisonRows.forEach(row => {
-        row.hidden = (Boolean(query) && !row.textContent.toLocaleLowerCase().includes(query)) ||
-          (Boolean(activeCategory) && row.dataset.category !== activeCategory) ||
-          (Boolean(activeModelType) && row.dataset.modelType !== activeModelType) ||
-          comparisonFilters.some(filter => filter.value && row.dataset[filter.dataset.comparisonFilter] !== filter.value);
+        const runIds = JSON.parse(row.dataset.runIds);
+        const eligible = new Set(filterSnapshot.eligibleRunIds);
+        const matching = runIds.filter(id => eligible.has(id)).length;
+        row.hidden = (Boolean(query) && !row.textContent.toLocaleLowerCase().includes(query)) || matching === 0;
+        let scope = row.querySelector('.condition-filter-scope');
+        if (!scope) { scope = document.createElement('span'); scope.className = 'condition-filter-scope model-meta'; row.cells[0].append(scope); }
+        scope.textContent = `${matching}/${runIds.length} runs match shared filters. Metrics cover all ${runIds.length} planned runs.`;
         if (!row.hidden) visible += 1;
       });
       let plotted = 0;
@@ -932,25 +937,16 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
       renderSelection();
     }
     comparisonSearch.addEventListener('input', applyComparisonSearch);
-    comparisonFilters.forEach(filter => filter.addEventListener('change', applyComparisonSearch));
     categoryButtons.forEach(button => button.addEventListener('click', () => {
-      activeCategory = button.dataset.categoryChoice;
-      categoryButtons.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
-      applyComparisonSearch();
+      window.reportFilters.setValue('adapter_category', button.dataset.categoryChoice || undefined);
     }));
     modelTypeButtons.forEach(button => button.addEventListener('click', () => {
-      activeModelType = button.dataset.modelTypeChoice;
-      modelTypeButtons.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
-      applyComparisonSearch();
+      const value = button.dataset.modelTypeChoice;
+      window.reportFilters.setValue('model_group', value === 'unspecified' ? null : value || undefined);
     }));
     document.getElementById('reset-comparison').addEventListener('click', () => {
-      activeCategory = '';
-      activeModelType = '';
-      categoryButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.categoryChoice === '')));
-      modelTypeButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.modelTypeChoice === '')));
       comparisonSearch.value = '';
-      comparisonFilters.forEach(filter => { filter.value = ''; });
-      applyComparisonSearch();
+      window.reportFilters.reset();
     });
     const selection = [];
     const selectionStatus = document.getElementById('selection-status');
@@ -1048,8 +1044,45 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
       }, {rootMargin: '-10% 0px -65% 0px'});
       observed.forEach(item => observer.observe(item.node));
     }
-    applyComparisonSearch();
-    applyFilters();"""
+    function applySharedFilters(snapshot) {
+      filterSnapshot = snapshot;
+      categoryButtons.forEach(button => button.setAttribute('aria-pressed', String(window.reportFilters.matchesValue('adapter_category', button.dataset.categoryChoice || undefined))));
+      modelTypeButtons.forEach(button => { const value = button.dataset.modelTypeChoice;
+        button.setAttribute('aria-pressed', String(window.reportFilters.matchesValue('model_group', value === 'unspecified' ? null : value || undefined))); });
+      const eligible = new Set(snapshot.eligibleRunIds);
+      document.querySelectorAll('[data-finding-runs]').forEach(article => {
+        const ids = JSON.parse(article.dataset.findingRuns);
+        const matching = ids.filter(id => eligible.has(id)).length;
+        article.hidden = ids.length > 0 && matching === 0;
+        let note = article.querySelector('.finding-filter-scope');
+        if (!note) { note = document.createElement('p'); note.className = 'finding-filter-scope finding-scope'; article.append(note); }
+        note.textContent = `${matching}/${ids.length} supporting runs match shared filters. This finding retains its stated full scope and denominator; filters do not rescore it.`;
+      });
+      applyFilters(); applyComparisonSearch();
+    }
+    // Heading and evidence links change their authored selection, preserving the
+    // rest of the local report state across native fragment navigation.
+    document.addEventListener('click', event => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = event.target.closest('a[href]');
+      if (!anchor || anchor.hasAttribute('download') || anchor.target && anchor.target !== '_self') return;
+      const raw = anchor.getAttribute('href');
+      if (!raw.startsWith('#')) return;
+      const split = value => { const index = value.indexOf('?'); return {heading: index < 0 ? value : value.slice(0,index), params: new URLSearchParams(index < 0 ? '' : value.slice(index+1))}; };
+      const current = split(window.location.hash.slice(1)), target = split(raw.slice(1));
+      const selectionKeys = ['run','compareRun','case'];
+      if (selectionKeys.some(key => target.params.has(key))) selectionKeys.forEach(key => current.params.set(key,''));
+      target.params.forEach((value,key) => current.params.set(key,value));
+      const query = current.params.toString();
+      const destination = '#' + target.heading + (query ? '?' + query : '');
+      event.preventDefault();
+      window.location.hash = destination;
+      const section = document.getElementById(target.heading);
+      if (section) { if (!section.hasAttribute('tabindex')) section.setAttribute('tabindex','-1'); section.focus({preventScroll:true}); }
+      if (section && typeof section.scrollIntoView === 'function') section.scrollIntoView({block:'start'});
+    });
+    window.addEventListener('report-filter-change', event => applySharedFilters(event.detail));
+    applySharedFilters(window.reportFilters.getState());"""
     comparison = _comparison_table(comparison_rows)
     overview_plot = (agreement_duration_plot(comparison_rows) if complete_references else
                      "<section class='duration-overview' aria-labelledby='duration-overview-heading'>"
@@ -1058,12 +1091,15 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
                      "Recorded duration and cost remain available in the comparison table.</p>"
                      "<p id='plot-status' class='status-line' role='status' aria-live='polite'></p></section>")
     explorer = render_report_explorer(analysis)
-    finding_data = build_findings(analysis)
+    comparative_data = build_comparative_findings(analysis)
+    comparative_panel = render_comparative_findings(comparative_data)
+    finding_data = build_findings(analysis, comparative=comparative_data)
     deep_findings = render_findings(finding_data)
     sensitivity_data = build_sensitivity(task, plan, predictions, labels, scenarios)
     sensitivity = render_sensitivity(sensitivity_data)
     downloads = render_downloads(build_report_exports(analysis, findings=finding_data,
                                  field_metrics=field_metrics, sensitivity=sensitivity_data))
+    shared_filters = render_report_filters(analysis)
     presentation = render_presentation(analysis, finding_data, sensitivity=sensitivity_data,
                                       field_metrics=field_metrics)
     if complete_references:
@@ -1106,6 +1142,7 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
             "<section class='comparison-section' aria-labelledby='comparison-heading'><div class='section-intro'>"
             "<div><span class='eyebrow'>01 / Compare</span><h2 id='comparison-heading'>Compare configurations and prompts</h2>"
             f"<p>{comparison_scope}</p></div></div>"
+            + shared_filters +
             "<p class='rail-label'>Operator-declared model group</p>"
             "<nav class='category-rail' aria-label='Operator-declared model groups'>" + model_type_buttons + "</nav>"
             "<p class='rail-label'>Adapter category</p>"
@@ -1128,7 +1165,7 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
             "<p class='status-line'>Observed cost totals include recorded charges only; coverage is shown against planned requests. Estimates remain in request details.</p></section>"
             "<section class='summary-section' aria-labelledby='summary-heading'><div>"
             "<span class='eyebrow'>02 / Scope</span><h2 id='summary-heading'>Whole experiment summary (unfiltered)</h2>"
-            "<p>These counts and findings cover the complete experiment. Filters below affect pass details only.</p>"
+            "<p>These counts and findings cover the complete experiment. Shared filters select runs across comparison and evidence views; these whole-experiment totals remain fixed.</p>"
             f"<p>Planned positions: {total}; valid selected predictions: {valid_count}; no selected prediction: {result['missing']}; invalid selected projection: {len(result['invalid'])}.</p>"
             "</div><div class='summary-data'><h3>Observed position outcomes</h3>"
             + _table(("Outcome", "Positions", "Planned denominator"),
@@ -1144,7 +1181,7 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
             f"<p id='filter-status' role='status' aria-live='polite'>Showing {sum(len(c['passes']) for c in result['conditions'])} of {sum(len(c['passes']) for c in result['conditions'])} pass sections.</p>"
             "<p id='filter-empty' hidden>No pass sections match these filters. Reset filters to show all passes.</p></section>"
             + "<nav class='detail-index' data-contents aria-label='Report contents'><h2>Contents</h2><ul>" + "".join(contents) + "</ul></nav>"
-            + "".join(pages) + explorer + deep_findings + sensitivity + downloads + presentation + "</main>"
+            + "".join(pages) + explorer + deep_findings + comparative_panel + sensitivity + downloads + presentation + "</main>"
             + "<footer class='provenance'><div class='shell'><h2 id='provenance-heading'>Provenance</h2><p>Canonical JSON SHA-256 digests bind the task, plan, references, selected prediction set and any supplied operation records. "
             "The evaluator validates planned positions and predictions; the caller is responsible for verifying operation records. "
             "This file includes private inputs and reference labels. Keep it local.</p>"

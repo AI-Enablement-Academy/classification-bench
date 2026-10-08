@@ -105,6 +105,8 @@ def _finding_html(item):
     links = " ".join(_link(a, case, case, b) for case in cases[:CASE_LINK_LIMIT]) if a else ""
     support = item["metrics"].get("class_support", {})
     support_text = "; ".join(f"{_h(label)}: {_h(count)}" for label, count in support.items())
+    supporting = item.get("supporting_links", [])[:PREVIEW_LIMIT]
+    supporting_html = "".join("<li>" + _link(link["run_a"], link["label"], compare=link.get("run_b"), case=link.get("case_id")) + "</li>" for link in supporting)
     boundaries = item["metrics"].get("range_evidence", [])[:2]
     boundary_links = "".join(
         "<li>" + _link(boundary["run_a"], f"Inspect {boundary['boundary']} acceptance boundary", compare=boundary["run_b"]) +
@@ -120,7 +122,7 @@ def _finding_html(item):
             (f"<p>Known reference class support: {support_text}. Unobserved classes have no measured performance.</p>" if support else "") +
             _reveal(f"<p class='presentation-note'>Interpretation: {_h(item['interpretation'])}</p>"
                     f"<p>Suggested follow-up: {_h(item['next_step'])}</p>") +
-            ("<ul class='presentation-boundary-links'>" + boundary_links + "</ul>"
+            ("<ul class='presentation-supporting-links'>" + supporting_html + "</ul>" if supporting else "<ul class='presentation-boundary-links'>" + boundary_links + "</ul>"
              "<p class='presentation-note'>These pairs explain the acceptance range. Every eligible pair remains in the agreement explorer; no preferred pair is implied.</p>" if boundaries else
              f"<p>{_link(a, 'Inspect supporting run pair' if b else 'Inspect supporting run', compare=b)}</p>" if a else "") +
             (f"<p class='presentation-case-links'>Supporting cases: {links}</p>" if links else "") +
@@ -341,6 +343,7 @@ def render_presentation(analysis, findings, *, sensitivity=None, field_metrics=N
     # Keep only narrative data and bounded links. Cases/predictions and the O(n²)
     # agreement projection are already held by the explorer, not copied here.
     compact_items = [{**item, "case_ids": item["case_ids"][:CASE_LINK_LIMIT],
+                      "supporting_links": item.get("supporting_links", [])[:PREVIEW_LIMIT],
                       "case_count": len(item["case_ids"]), "run_ids": item["run_ids"][:PREVIEW_LIMIT],
                       "run_count": len(item["run_ids"]),
                       "metrics": {"class_support": item["metrics"].get("class_support", {}),
@@ -449,7 +452,11 @@ _SCRIPT = """<script>
     const reveal = element('div'); reveal.dataset.presentationReveal = '';
     reveal.append(element('p', 'Interpretation: ' + item.interpretation, 'presentation-note'), element('p', 'Suggested follow-up: ' + item.next_step)); article.append(reveal);
     const boundaries = (item.metrics.range_evidence || []).slice(0, 2);
-    if (boundaries.length) {
+    const supporting = item.supporting_links || [];
+    if (supporting.length) {
+      const list = element('ul', undefined, 'presentation-supporting-links');
+      supporting.forEach(item => { const row = element('li'); row.append(link(item.run_a, item.label, item.run_b, item.case_id)); list.append(row); }); article.append(list);
+    } else if (boundaries.length) {
       const list = element('ul', undefined, 'presentation-boundary-links');
       boundaries.forEach(boundary => {const row = element('li'); row.append(link(boundary.run_a, 'Inspect ' + boundary.boundary + ' acceptance boundary', boundary.run_b), document.createTextNode(': ' + boundary.accepted + '/' + boundary.planned + ' cases; one of ' + boundary.tied_pairs + ' tied pairs.')); list.append(row);});
       article.append(list, element('p', 'These pairs explain the acceptance range. Every eligible pair remains in the agreement explorer; no preferred pair is implied.', 'presentation-note'));
