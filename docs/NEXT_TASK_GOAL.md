@@ -110,6 +110,18 @@ Present quality, cost, token and timing comparisons only when measurements suppo
 
 Use the reference project's current report as the primary functional reference. Use Recruitly and Cloudflare's benchmark sites as additional visual references. Apply relevant design and writing skills, restrained motion, useful click/scroll exploration, keyboard navigation, visible focus, responsive layouts and reduced-motion support.
 
+Make deep findings analysis a built-in, reusable feature of both the report and presentation. Match or improve upon the recruitment example's analytical depth and visual quality.
+
+Generate analysis from each experiment's actual evidence. Explain main findings and their task-specific implications; configuration strengths and failure patterns; measured quality, cost, latency and reliability tradeoffs; per-field and per-class weaknesses; difficult cases and disagreements; and comparable prompt, reasoning, batching and repeat effects. Show where missing data, uncertain references or limited samples weaken conclusions and identify follow-up experiments that would resolve those uncertainties.
+
+Every finding must disclose its comparison scope and denominator and link to supporting runs, cases or measurements. Distinguish observations, interpretations and recommendations. Do not invent causal explanations, statistical certainty or universal model rankings.
+
+Provide an executive overview, an evidence-backed findings narrative, interactive comparisons and detailed case inspection. The presentation must explain findings and limitations, rather than merely reproduce tables or leaderboard cards.
+
+Calculate metrics and evidence selection deterministically. Useful analysis must not require another model call. Any optional model-written narrative must be explicitly enabled, budgeted, grounded in supplied evidence and checked for unsupported claims.
+
+Treat visual quality as an acceptance requirement: match or exceed the recruitment example's typography, hierarchy, spacing, chart clarity, navigation, responsive behavior and restrained motion. Adapt the design to arbitrary tasks and datasets without hardcoded recruitment content. Verify analytical correctness and rendered visual quality separately, including desktop, mobile, keyboard navigation and reduced-motion behavior.
+
 7. Preserve privacy and existing authorization boundaries.
 
 Keep classification-bench private. Credentials belong in an ignored private project environment file, never source, reports or commits.

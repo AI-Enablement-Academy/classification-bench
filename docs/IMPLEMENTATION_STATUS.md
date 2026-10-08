@@ -1,4 +1,14 @@
 # Implementation status: 2026-10-08
+## Optional references and evidence-linked analysis, 2026-10-08
+
+The evaluator and CLI now support absent references and explicitly opted-in partial references. Schema 2 separates reference coverage, known-field/subset scores and full planned output counts; whole-run accuracy remains unavailable with incomplete references. Complete-reference schema 1 outputs retain their prior canonical bytes. An independent review compared 100 generated complete evaluations with the previous evaluator and checked 1,824 partial-reference support/FN calculations without finding a discrepancy.
+
+The report integrates a generic run/case explorer, exact A/B field/status differences, local fragment selection URLs, paired prompt gains/losses, all eligible agreement pairs and cost/source disclosure. Paginated pair tables retain all results and do not rebuild on case-only changes; a 60-run/1,770-pair fixture exercises navigation. Monetary values retain exact decimal units in the browser. [Deterministic findings](FINDINGS_ANALYSIS.md) explain coverage, field errors/class support, prompt effects, repeats, cost coverage and the all-pairs acceptance range, with exact supporting links and interpretation limits.
+
+Final verification: `python3 -m unittest discover -s tests -v` passed **338 tests in 31.237 seconds, no skips**, exit 0; log `/tmp/classification-bench-analysis-verified-20261008.log`. Independent core/findings and report/CLI reviews returned **APPROVE**, with no remaining confirmed BLOCKING or RESIDUAL findings in those review scopes. Review resolved eager pair rendering, source-alias mutation and a legacy synthetic-unit regression. Six [private working fixtures](REPORT_ANALYSIS_CHECK.md) were generated with network connections forbidden; embedded JavaScript/JSON syntax, source hashes and mode 0600 were verified. These checks are not rendered acceptance.
+
+No inference, credential copying or source-project mutation occurred. The expanded goal remains incomplete: presentation, reference sensitivity, synchronized report-wide filtering, richer controlled cross-configuration analysis, full metric presentation, operator/live route acceptance and rendered visual-quality gates still require work. The user's requirement for recruitment-level analytical depth and visual quality is now explicit in [the goal](NEXT_TASK_GOAL.md).
+
 ## Generic task and subscription foundation, 2026-10-08
 
 The [expanded goal](NEXT_TASK_GOAL.md) is active. Its [source-pinned parity matrix](FEATURE_PARITY.md) covers 59 requirements against candidate-experience-benchmark commit `6243eb3`. The earlier visual-only completion scope is superseded.

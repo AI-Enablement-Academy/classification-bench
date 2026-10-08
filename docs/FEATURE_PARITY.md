@@ -28,6 +28,12 @@ This does not close T7 optional-reference evaluation or the missing report featu
 
 ## Baseline, task setup and references
 
+### Analysis checkpoint, 2026-10-08
+
+T6/T7 now have optional-reference evaluator/CLI/report implementation and offline evidence. Complete-reference results retain their old bytes. R5–R7 gain exact run/case selection, A/B differences, source-bound local URLs and evidence links; R9/R10 gain deterministic prompt/repeat transitions; R13/R14 gain every eligible pair, paginated drilldown and exact cost coverage. R1 now includes reusable [findings](FINDINGS_ANALYSIS.md). R11/R12 have analysis-layer cohort declarations, not yet a complete operator/UI workflow. Existing baseline rows remain historical; this overlay records the increment without pretending all requirements are closed.
+
+Final suite: 338 tests passed in 31.237 seconds, no skips; independent reviews APPROVE. [Working fixture checks](REPORT_ANALYSIS_CHECK.md) are source/DOM/syntax evidence only. R3/R4 synchronization/search, full R8 metric presentation, deeper controlled comparison narratives, R15 sensitivity, R16 downloads, R18 presentation and R19 rendered visual acceptance remain work, alongside the non-report release gates.
+
 | ID / required capability | Demonstrated source behavior | Generic baseline and acceptance evidence | Exact gap / acceptance needed |
 | --- | --- | --- | --- |
 | B1. Inspect latest source and distinguish code from proposals | [README][s-readme] links the working explorer and exact saved outcomes. [Harness specification][s-harness] explicitly says "design proposal" and describes a conceptual interface. | This matrix pins GitHub HEAD and committed source bytes. [Architecture](ARCHITECTURE.md) and [runtime registry][g-runtime] are existing generic code. | Retain this pin; refresh only through a new documented source review. Do not credit conceptual HARNESS_SPEC APIs as demonstrated functionality. |
@@ -75,6 +81,8 @@ This does not close T7 optional-reference evaluation or the missing report featu
 | O10. Recovery never automatically resends a possibly dispatched request | Source subscription workflows retain unmatched starts and interruptions; [source harness][s-harness] explicitly refuses exactly-once guarantees without support. | [Recovery][g-benchmark], [execution tests](../tests/test_execution.py), [verified execution tests](../tests/test_verified_execution.py); historical completed restart preserves dispatch count. | Test CLI crash before intent, after intent, after saved output and before receipt commit. Recover existing output before considering new work. Ambiguous work stays unresolved with its hold; explicit reviewed continuation is a new identity. |
 
 ## Report, exploration and presentation
+
+The user's 8 October clarification makes deep findings analysis and visual quality explicit release requirements. R1 and R18 must provide a reusable evidence-backed narrative, not only summary tables: scope and denominators, failure patterns, measured tradeoffs, paired effects, uncertainty and actionable follow-up experiments. R19 must verify visual quality against the recruitment reference. Deterministic analysis must work without another model call; any optional generated prose needs explicit enabling, evidence grounding and budget accounting. This clarification does not claim these requirements are implemented or visually accepted.
 
 | ID / required capability | Demonstrated source behavior | Generic baseline and acceptance evidence | Exact gap / acceptance needed |
 | --- | --- | --- | --- |

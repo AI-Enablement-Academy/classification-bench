@@ -6,7 +6,10 @@ from html import escape
 import json
 import math
 
-from .core import ValidationError, _digest, evaluate
+from .core import ValidationError, _digest, evaluate, validate_reference_labels
+from .report_analysis import build_analysis
+from .report_explorer import render_report_explorer
+from .report_findings import build_findings, render_findings
 from .report_visuals import agreement_duration_plot
 
 
@@ -15,6 +18,8 @@ def _h(value):
 
 
 def _rate(numerator, denominator):
+    if numerator is None:
+        return "unavailable"
     return f"{numerator}/{denominator} ({numerator / denominator:.1%})" if denominator else "0/0 (unavailable)"
 
 
@@ -304,21 +309,28 @@ def _svg(title, description, contents, chart_id, height, width=760):
 
 def _score_visual(condition, chart_id):
     passes = condition["passes"]
+    partial = condition["pass_score_range"] is None
+    if partial and condition["scored_subset_score_range"] is None:
+        return "<p>Exact agreement chart unavailable: no cases have complete references.</p>"
     body = ""
     for index, entry in enumerate(passes):
+        score = entry["scored_subset"] if partial else entry
         y = 38 + index * 42
-        width = round(300 * entry["all_field_exact_rate"], 2)
+        width = round(300 * score["all_field_exact_rate"], 2)
         body += (f"<text x='5' y='{y + 15}'>Pass {entry['repeat']}</text>"
                  f"<rect class='score' x='140' y='{y}' width='{width}' height='20'/>"
-                 f"<text x='450' y='{y + 15}'>{entry['all_field_exact']}/{entry['denominator']} "
-                 f"({entry['all_field_exact_rate']:.1%})</text>")
-    low, high = condition["pass_score_range"]
+                 f"<text x='450' y='{y + 15}'>{score['all_field_exact']}/{score['denominator']} "
+                 f"({score['all_field_exact_rate']:.1%})</text>")
+    low, high = condition["scored_subset_score_range"] if partial else condition["pass_score_range"]
     y = 46 + len(passes) * 42
     x1, x2 = 140 + 300 * low, 140 + 300 * high
     body += (f"<text x='5' y='{y}'>Pass range</text>"
              f"<line class='range' x1='{x1:.2f}' x2='{x2:.2f}' y1='{y - 5}' y2='{y - 5}'/>"
              f"<text x='450' y='{y}'>{low:.1%} to {high:.1%}</text>")
-    return _svg("Exact agreement by pass", "Bars show all-field exact agreement divided by every planned case in each pass. The line shows the range across passes.",
+    title = "Scored subset exact agreement by pass" if partial else "Exact agreement by pass"
+    description = ("Bars include only cases with complete references; missing and invalid predictions on those cases receive no credit. Cases without complete references are excluded from this scored subset. The line shows the range across passes."
+                   if partial else "Bars show all-field exact agreement divided by every planned case in each pass. The line shows the range across passes.")
+    return _svg(title, description,
                 body, chart_id, y + 20)
 
 
@@ -342,7 +354,7 @@ def _delta_visual(condition, baseline_scores, baseline_id, chart_id):
 
 def _cost_visual(condition, costs, chart_id, currency):
     known = [value for value in costs.values() if value is not None]
-    if not known:
+    if not known or condition["pass_score_range"] is None:
         return ""
     highest = max(known) or 1
     body = f"<text x='140' y='20'>Agreement</text><text x='385' y='20'>Observed {_h(currency)}</text>"
@@ -450,7 +462,7 @@ def _operation_summary(records, planned_count, currency):
         "Unavailable means that evidence did not provide the value.</p>") + _table(
         ("Request ID", "Requested model", "Completion returned model", "Frozen canonical model",
          "Generation returned model", "Requested provider", "Observed provider",
-         "Provider identity evidence", "Verified receipt SHA-256"), identity_rows,
+         "Provider identity evidence", "Supplied receipt evidence / pointer"), identity_rows,
         caption="Request model and provider identity") + (
         "<p>Token detail comes from saved usage. Token-price estimates use the frozen endpoint snapshot at the standard input rate, exclude cache savings, and are separate from observed charges. "
         "Unavailable values are omitted from totals.</p>" + _table(
@@ -519,9 +531,12 @@ details{margin-top:1rem}.raw-usage pre{max-height:24rem;overflow:auto;padding:1r
 """
 
 
-def generate_report(task, plan, labels, predictions, operations=None):
+def generate_report(task, plan, labels=None, predictions=None, operations=None, *,
+                    allow_partial_references=False):
     """Return a local HTML report. Inputs and references remain in its case details."""
-    result = evaluate(task, plan, labels, predictions)
+    result = evaluate(task, plan, labels, predictions,
+                      allow_partial_references=allow_partial_references)
+    complete_references = result["schema_version"] == 1
     if operations is None:
         operations = []
     if not isinstance(operations, list) or any(not isinstance(x, dict) for x in operations):
@@ -554,7 +569,6 @@ def generate_report(task, plan, labels, predictions, operations=None):
 
     configs = {x["id"]: x for x in plan["experiment"]["configs"]}
     prompts = {x["id"]: x for x in plan["experiment"]["prompts"]}
-    references = {x["id"]: x["labels"] for x in labels["records"]}
     supplied = {(x["config_id"], x["prompt_id"], x["repeat"], x["id"]): x["prediction"]
                 for x in predictions["records"]}
     invalid = {(x["config_id"], x["prompt_id"], x["repeat"], x["id"]) for x in result["invalid"]}
@@ -563,6 +577,8 @@ def generate_report(task, plan, labels, predictions, operations=None):
         if req["config_id"] == plan["experiment"]["configs"][0]["id"] and req["prompt_id"] == plan["experiment"]["prompts"][0]["id"] and req["repeat"] == 1:
             items.update({x["id"]: x["input"] for x in req["items"]})
     all_ids = list(items)
+    references = validate_reference_labels(labels, task, all_ids,
+                                          allow_partial=allow_partial_references)
     total = result["positions"]
     valid_count = total - result["missing"] - len(result["invalid"])
     outcomes = {key: _observed_outcome(key, invalid, supplied, position_operation.get(key))
@@ -575,15 +591,19 @@ def generate_report(task, plan, labels, predictions, operations=None):
     contents = []
     comparison_rows = []
     score_by_pass = {}
+    subset_by_pass = {}
     for condition in result["conditions"]:
         cid, pid = condition["config_id"], condition["prompt_id"]
         for entry in condition["passes"]:
             score_by_pass[(cid, pid, entry["repeat"])] = entry["all_field_exact"]
+            if not complete_references:
+                subset_by_pass[(cid, pid, entry["repeat"])] = entry["scored_subset"]
     baseline = plan["experiment"]["prompts"][0]["id"]
     findings = [f"{valid_count} of {total} planned positions have a valid selected classification. "
                 f"{result['missing']} have no selected prediction; {len(result['invalid'])} have an invalid selected projection. "
                 "Observed runner outcomes are counted separately below, once per planned position. "
-                "A valid classification may still disagree with its reference."]
+                + ("A valid classification may still disagree with its reference."
+                   if complete_references else "Reference agreement is available only for supplied valid labels; unknown references are not counted as errors.")]
     if len(prompts) > 1:
         findings.append(f"Prompt effects compare each prompt with {_h(baseline)} within the same configuration and pass.")
 
@@ -625,14 +645,21 @@ def generate_report(task, plan, labels, predictions, operations=None):
             for field in task["fields"]:
                 name = field["name"]
                 stats = entry["fields"][name]
-                diagonal = sum(stats["confusion"][label][label] for label in field["labels"])
-                support = ", ".join(f"{label}: {stats['labels'][label]['support']}" for label in field["labels"])
-                errors = [(actual, predicted, count) for actual in field["labels"]
-                          for predicted in field["labels"] if actual != predicted
-                          for count in [stats["confusion"][actual][predicted]] if count]
-                confusion = ", ".join(f"{a} → {b}: {n}" for a, b, n in errors) or "none"
-                field_rows.append((name, _rate(diagonal, entry["denominator"]), support, confusion,
-                                   json.dumps(stats["unscored_by_true_label"], ensure_ascii=False)))
+                known_denominator = entry["denominator"] if complete_references else stats["reference_denominator"]
+                if stats["confusion"] is None:
+                    diagonal, support, confusion, unscored = None, "unavailable", "unavailable", "unavailable"
+                else:
+                    diagonal = sum(stats["confusion"][label][label] for label in field["labels"])
+                    support = ", ".join(f"{label}: {stats['labels'][label]['support']}" for label in field["labels"])
+                    errors = [(actual, predicted, count) for actual in field["labels"]
+                              for predicted in field["labels"] if actual != predicted
+                              for count in [stats["confusion"][actual][predicted]] if count]
+                    confusion = ", ".join(f"{a} → {b}: {n}" for a, b, n in errors) or "none"
+                    unscored = json.dumps(stats["unscored_by_true_label"], ensure_ascii=False)
+                field_row = (name, _rate(diagonal, known_denominator), support, confusion, unscored)
+                if not complete_references:
+                    field_row += (f"{known_denominator}/{entry['denominator']} known references",)
+                field_rows.append(field_row)
             case_rows = []
             pass_outcomes = Counter()
             for record_id in all_ids:
@@ -640,9 +667,14 @@ def generate_report(task, plan, labels, predictions, operations=None):
                 status = outcomes[key]
                 pass_outcomes[status] += 1
                 prediction = supplied.get(key) if key not in invalid else None
-                agreement = "unscored" if prediction is None else "agree" if prediction == references[record_id] else "disagree"
+                reference = references.get(record_id, {})
+                full_reference = len(reference) == len(task["fields"])
+                agreement = ("unavailable (partial reference)" if reference and not full_reference else
+                             "unavailable (no reference)" if not reference else
+                             "unscored" if prediction is None else
+                             "agree" if prediction == reference else "disagree")
                 case_rows.append((record_id, status, agreement,
-                                  json.dumps(references[record_id], ensure_ascii=False),
+                                  json.dumps(reference, ensure_ascii=False) if reference else "unavailable",
                                   json.dumps(supplied[key], ensure_ascii=False) if key in supplied else "unavailable",
                                   json.dumps(items[record_id], ensure_ascii=False)))
             outcome_rows = [(status, count, entry["denominator"]) for status, count in sorted(pass_outcomes.items())]
@@ -650,8 +682,26 @@ def generate_report(task, plan, labels, predictions, operations=None):
             if pid != baseline:
                 before = score_by_pass[(cid, baseline, repeat)]
                 after = entry["all_field_exact"]
-                paired.append(f"Paired prompt effect against {_h(baseline)}: {after - before:+d} exact matches "
-                              f"({before}/{entry['denominator']} → {after}/{entry['denominator']}).")
+                if complete_references:
+                    paired.append(f"Paired prompt effect against {_h(baseline)}: {after - before:+d} exact matches "
+                                  f"({before}/{entry['denominator']} → {after}/{entry['denominator']}).")
+                else:
+                    subset = entry["scored_subset"]
+                    baseline_subset = subset_by_pass[(cid, baseline, repeat)]
+                    before, after = baseline_subset["all_field_exact"], subset["all_field_exact"]
+                    paired.append(f"Full-denominator paired reference effect against {_h(baseline)}: unavailable.")
+                    if before is not None and after is not None:
+                        paired.append(f"Scored subset paired prompt effect against {_h(baseline)}: {after - before:+d} exact matches "
+                                      f"({before}/{subset['denominator']} → {after}/{subset['denominator']}); only cases with complete references.")
+            subset_note = ""
+            if not complete_references:
+                subset = entry["scored_subset"]
+                subset_note = (f"<p>Scored subset exact agreement: {_rate(subset['all_field_exact'], subset['denominator'])}; "
+                               f"{subset['denominator']}/{entry['denominator']} cases have complete references. "
+                               "Unknown references are excluded from this score. Missing and invalid predictions on referenced cases receive no credit.</p>")
+            field_headers = ("Field", "Agreement", "Reference class support", "Valid disagreements", "Unscored by reference class")
+            if not complete_references:
+                field_headers = ("Field", "Known-reference agreement", "Known reference class support", "Valid disagreements", "Unscored by reference class", "Reference coverage")
             pass_anchor = f"{condition_anchor}-pass-{repeat}"
             contents.append(f"<li class='contents-pass'><a href='#{pass_anchor}'>{_h(cid)} · {_h(pid)} · pass {repeat}</a></li>")
             rows.append(f"<section class='pass' id='{pass_anchor}' {attributes}><h3>{_h(cid)} · {_h(pid)} · pass {repeat}</h3>"
@@ -661,12 +711,13 @@ def generate_report(task, plan, labels, predictions, operations=None):
                         f"<p>Exact agreement: {_rate(entry['all_field_exact'], entry['denominator'])}; "
                         f"no selected prediction: {entry['missing']}; invalid selected projection: {entry['invalid']}. "
                         "Every planned position remains in the denominator. These projection counts are distinct from observed runner outcomes.</p>"
+                        + subset_note
                         + "".join(f"<p>{line}</p>" for line in paired)
                         + "<h4>Observed position outcomes</h4>"
                         + _table(("Outcome", "Positions", "Planned denominator"), outcome_rows,
                                  caption=f"Observed position outcomes for {cid}, {pid}, pass {repeat}", class_name="outcome-table")
                         + "<h4>Field agreement and class errors</h4>"
-                        + _table(("Field", "Agreement", "Reference class support", "Valid disagreements", "Unscored by reference class"), field_rows,
+                        + _table(field_headers, field_rows,
                                  caption=f"Field agreement for {cid}, {pid}, pass {repeat}", row_header=True, numeric_columns=(1,))
                         + "<h4>Request evidence</h4>" + _operation_summary(ops, len(requests), currency)
                         + "<details><summary>Supporting cases (private input text and references)</summary>"
@@ -678,8 +729,9 @@ def generate_report(task, plan, labels, predictions, operations=None):
             comparisons.append((f"{comparison['repeat_a']} vs {comparison['repeat_b']}",
                                 _rate(comparison["flips"], comparison["comparable"]),
                                 str(comparison["excluded"]), ", ".join(comparison["changed_ids"]) or "none"))
-        lo, hi = condition["pass_score_range"]
-        exact = sum(entry["all_field_exact"] for entry in condition["passes"])
+        score_range = condition["pass_score_range"]
+        range_text = f"{score_range[0]:.1%} to {score_range[1]:.1%}" if score_range is not None else "unavailable"
+        exact = sum(entry["all_field_exact"] for entry in condition["passes"]) if complete_references else None
         denominator = sum(entry["denominator"] for entry in condition["passes"])
         invalid_count = sum(entry["invalid"] for entry in condition["passes"])
         missing_count = sum(entry["missing"] for entry in condition["passes"])
@@ -706,11 +758,11 @@ def generate_report(task, plan, labels, predictions, operations=None):
             "config": cid, "prompt": pid, "model": config["model"],
             "anchor": condition_anchor, "category": _adapter_category(settings),
             "model_type": model_type, "model_type_label": _MODEL_TYPE_LABELS[model_type],
-            "plot_state": "synthetic" if synthetic_timing else "measured" if duration_values else "unavailable",
+            "plot_state": "reference_unavailable" if not complete_references else "synthetic" if synthetic_timing else "measured" if duration_values else "unavailable",
             "duration_mean": sum(duration_values) / len(duration_values) if duration_values else None,
             "duration_measured": len(duration_values), "duration_planned": len(condition_requests),
             "exact_numerator": exact, "exact_denominator": denominator,
-            "exact_fraction": exact / denominator if denominator else 0,
+            "exact_fraction": exact / denominator if exact is not None and denominator else None,
             "route": _display_metadata(_first_metadata(
                 settings.get("route"), _native_requested_route(config),
                 ", ".join(sorted({_display_metadata(op["route"]) for op in condition_ops
@@ -721,13 +773,14 @@ def generate_report(task, plan, labels, predictions, operations=None):
                                   if _first_metadata(op.get("provider")) is not None}))),
                 "provider unavailable"),
             "status": (f"{invalid_count + missing_count} selected prediction gap(s)"
-                       if invalid_count + missing_count else "Selected predictions complete"),
+                       if invalid_count + missing_count else "Selected predictions complete")
+                       + ("; full reference agreement unavailable" if not complete_references else ""),
             "has_gaps": invalid_count + missing_count > 0,
-            "display": (cid, pid, _rate(exact, denominator), f"{lo:.1%} to {hi:.1%}",
+            "display": (cid, pid, _rate(exact, denominator), range_text,
                         invalid_count, missing_count, duration, observed, coverage),
             "sort": {"model": config["model"], "prompt": pid,
-                     "exact": exact / denominator if denominator else "",
-                     "range": lo, "invalid": invalid_count, "missing": missing_count,
+                     "exact": exact / denominator if exact is not None and denominator else "",
+                     "range": score_range[0] if score_range is not None else "", "invalid": invalid_count, "missing": missing_count,
                      "duration": sum(duration_values) / len(duration_values) if duration_values else "",
                      "cost": observed, "coverage": sum(map(len, charge_groups.values())) / len(condition_requests)
                      if condition_requests else ""},
@@ -736,7 +789,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
         baseline_scores = {p["repeat"]: score_by_pass[(cid, baseline, p["repeat"])]
                            for p in condition["passes"]}
         visuals = _score_visual(condition, chart_id + "-score")
-        if pid != baseline:
+        if pid != baseline and complete_references:
             visuals += _delta_visual(condition, baseline_scores, baseline, chart_id + "-delta")
         if len(charge_groups) <= 1:
             chart_currency = next(iter(charge_groups), currency)
@@ -745,7 +798,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
             visuals += "<p>Observed costs use more than one currency; see the separate per-currency totals above and in each pass.</p>"
         pages.append(f"<article class='condition' id='{condition_anchor}'><h2>{_h(cid)} · {_h(pid)}</h2>"
                      f"<p>Prompt: {_h(prompt['text'])}</p>"
-                     f"<p>Exact agreement across passes: {lo:.1%} to {hi:.1%}. "
+                     f"<p>Exact agreement across passes: {range_text}. "
                      "Each pass uses the same input cases; passes are separate dispatches. "
                      "For synthetic outputs, repeated passes show pipeline behavior, not model variability.</p>"
                      "<p>Condition overview below covers all passes, even when a pass filter is selected.</p>"
@@ -764,7 +817,8 @@ def generate_report(task, plan, labels, predictions, operations=None):
             values = sorted({str(value) for value in _filter_values(key, plan, operations)})
         options = "<option value=''>All</option>" + "".join(f"<option value='{_h(v)}'>{_h(v)}</option>" for v in values)
         filters.append(f"<label>{label} <select data-filter='{key}'>{options}</select></label>")
-    source_rows = [(name, digest) for name, digest in result["source_hashes"].items()]
+    source_rows = [(name, digest if digest is not None else "unavailable (not supplied)")
+                   for name, digest in result["source_hashes"].items()]
     if operations:
         source_rows.append(("supplied operations", _digest(operations)))
     categories = Counter(row["category"] for row in comparison_rows)
@@ -794,7 +848,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
       passes.forEach(section => {
         section.hidden = filters.some(filter => filter.value && section.dataset[filter.dataset.filter] !== filter.value);
       });
-      document.querySelectorAll('article').forEach(article => {
+      document.querySelectorAll('article.condition').forEach(article => {
         article.hidden = !article.querySelector('.pass:not([hidden])');
       });
       const visible = passes.filter(section => !section.hidden).length;
@@ -815,6 +869,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
     }));
     const comparisonBody = document.querySelector('.comparison-table tbody');
     const comparisonRows = [...comparisonBody.rows];
+    const referenceScoringUnavailable = comparisonRows.some(row => row.dataset.plotState === 'reference_unavailable');
     const comparisonSearch = document.getElementById('comparison-search');
     const comparisonFilters = [...document.querySelectorAll('[data-comparison-filter]')];
     const categoryButtons = [...document.querySelectorAll('[data-category-choice]')];
@@ -837,6 +892,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
       let plotted = 0;
       let unavailable = 0;
       let synthetic = 0;
+      let referenceUnavailable = 0;
       comparisonRows.forEach(row => {
         const point = plotById.get(row.dataset.plotId);
         const label = plotLabels.get(row.dataset.plotId);
@@ -848,14 +904,18 @@ def generate_report(task, plan, labels, predictions, operations=None):
         if (row.hidden) return;
         if (row.dataset.plotState === 'measured') plotted += 1;
         else if (row.dataset.plotState === 'synthetic') synthetic += 1;
+        else if (row.dataset.plotState === 'reference_unavailable') referenceUnavailable += 1;
         else unavailable += 1;
       });
       const chart = document.getElementById('agreement-duration-chart');
-      if (plotted === 0) chart.setAttribute('hidden', '');
-      else chart.removeAttribute('hidden');
+      if (chart) {
+        if (plotted === 0) chart.setAttribute('hidden', '');
+        else chart.removeAttribute('hidden');
+      }
       document.getElementById('plot-empty').hidden = plotted !== 0;
-      document.getElementById('plot-status').textContent =
-        `${plotted} plotted of ${visible} visible conditions; ${unavailable} lack measured duration; ${synthetic} synthetic conditions excluded. Axes use all measured nonsynthetic conditions.`;
+      document.getElementById('plot-status').textContent = referenceScoringUnavailable
+        ? `${plotted} plotted of ${visible} visible conditions; ${referenceUnavailable} lack complete reference coverage. Full-denominator agreement is unavailable.`
+        : `${plotted} plotted of ${visible} visible conditions; ${unavailable} lack measured duration; ${synthetic} synthetic conditions excluded. Axes use all measured nonsynthetic conditions.`;
       document.getElementById('comparison-status').textContent =
         `Showing ${visible} of ${comparisonRows.length} configurations and prompts in this comparison view. Whole-experiment totals remain unfiltered.`;
       document.getElementById('comparison-empty').hidden = visible !== 0;
@@ -961,7 +1021,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
       });
     }
     sectionLinks.forEach(link => link.addEventListener('click', () => setActiveSection(link.hash.slice(1))));
-    function setActiveFromHash() { setActiveSection(window.location.hash.slice(1)); }
+    function setActiveFromHash() { setActiveSection(window.location.hash.split('?')[0].slice(1)); }
     window.addEventListener('hashchange', setActiveFromHash);
     setActiveSection('comparison-heading');
     setActiveFromHash();
@@ -981,7 +1041,28 @@ def generate_report(task, plan, labels, predictions, operations=None):
     applyComparisonSearch();
     applyFilters();"""
     comparison = _comparison_table(comparison_rows)
-    overview_plot = agreement_duration_plot(comparison_rows)
+    overview_plot = (agreement_duration_plot(comparison_rows) if complete_references else
+                     "<section class='duration-overview' aria-labelledby='duration-overview-heading'>"
+                     "<h3 id='duration-overview-heading'>Agreement and client request duration</h3>"
+                     "<p id='plot-empty'>Full-denominator agreement plot unavailable: complete reference coverage is required. "
+                     "Recorded duration and cost remain available in the comparison table.</p>"
+                     "<p id='plot-status' class='status-line' role='status' aria-live='polite'></p></section>")
+    analysis = build_analysis(task, plan, predictions, labels=labels, operations=operations)
+    explorer = render_report_explorer(analysis)
+    deep_findings = render_findings(build_findings(analysis))
+    if complete_references:
+        reference_notice = ""
+        comparison_scope = "Exact agreement uses every planned position. Missing and invalid predictions earn no credit."
+        score_scope = "Scores use all planned positions. Positions without valid selected predictions receive no agreement credit. "
+    else:
+        coverage = result["reference_coverage"]
+        reference_notice = (f"<p class='notice'>Reference coverage: {_h(coverage['status'])}; "
+                            f"{len(coverage['fully_labeled_ids'])}/{len(all_ids)} cases fully referenced, "
+                            f"{len(coverage['partially_labeled_ids'])} partially referenced, "
+                            f"{len(coverage['unlabeled_ids'])} without known references. "
+                            "Full-denominator exact agreement is unavailable.</p>")
+        comparison_scope = "Exact agreement and repeat score ranges are unavailable without complete reference coverage. Known-reference scores appear separately in pass evidence."
+        score_scope = "All planned positions remain in the outcome counts. Reference scores include only explicitly known references; unknown references receive no correctness judgment. "
     synthetic_notice = ("<p class='notice'>Contains synthetic results: SYN units are local accounting, not provider charges.</p>"
                         if any(config.get("settings", {}).get("adapter") == "synthetic" for config in configs.values())
                         or any(str(op.get("route", "")).startswith("synthetic:") for op in operations) else "")
@@ -993,7 +1074,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
             "<a class='skip-link' href='#main-content'>Skip to main content</a>"
             f"<header class='masthead'><div class='shell'><span class='eyebrow'>Private local classification report</span>"
             f"<h1>{_h(task['name'])}</h1><p class='lead'>Compare recorded classifications across models, prompts and passes.</p>"
-            + synthetic_notice +
+            + synthetic_notice + reference_notice +
             f"<div class='overview-meta'><div><span class='meta-label'>Planned positions</span><span class='meta-value'>{total}</span></div>"
             f"<div><span class='meta-label'>Configurations</span><span class='meta-value'>{len(configs)}</span></div>"
             f"<div><span class='meta-label'>Prompts</span><span class='meta-value'>{len(prompts)}</span></div>"
@@ -1001,11 +1082,12 @@ def generate_report(task, plan, labels, predictions, operations=None):
             "<div><span class='meta-label'>Evidence</span><span class='meta-value'>Local source digests</span></div></div></div></header>"
             "<nav class='jump-nav' aria-label='Report sections'><div class='shell'><a href='#comparison-heading'>Comparison</a>"
             "<a href='#summary-heading'>Whole experiment</a><a href='#detail-heading'>Pass evidence</a>"
+            "<a href='#case-explorer-heading'>Case explorer</a><a href='#deep-findings'>Findings and follow-up</a>"
             "<a href='#provenance-heading'>Provenance</a></div></nav>"
             "<main id='main-content' class='shell'>"
             "<section class='comparison-section' aria-labelledby='comparison-heading'><div class='section-intro'>"
             "<div><span class='eyebrow'>01 / Compare</span><h2 id='comparison-heading'>Compare configurations and prompts</h2>"
-            "<p>Exact agreement uses every planned position. Missing and invalid predictions earn no credit.</p></div></div>"
+            f"<p>{comparison_scope}</p></div></div>"
             "<p class='rail-label'>Operator-declared model group</p>"
             "<nav class='category-rail' aria-label='Operator-declared model groups'>" + model_type_buttons + "</nav>"
             "<p class='rail-label'>Adapter category</p>"
@@ -1035,8 +1117,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
                      [(status, count, total) for status, count in sorted(outcome_counts.items())],
                      caption="Observed outcomes across the whole experiment", class_name="outcome-table")
             + "<p>Each planned position appears once in this table. A missing selected prediction can correspond to a refusal, failure, unknown dispatch, or a request without observed evidence.</p>"
-            "<p>Scores use all planned positions. Positions without valid selected predictions receive no agreement credit. "
-            "Request timing is measured per request, which may contain a batch; it is not per-case inference latency.</p>"
+            f"<p>{score_scope}Request timing is measured per request, which may contain a batch; it is not per-case inference latency.</p>"
             "<h3>Findings</h3>" + "".join(f"<p>{x}</p>" for x in findings)
             + "</div></section><section class='filters' aria-label='Pass filters'><span class='eyebrow'>03 / Inspect</span>"
             "<h2 id='detail-heading'>Pass evidence</h2><p>Filter the pass details without changing the comparison or experiment totals.</p>"
@@ -1045,7 +1126,7 @@ def generate_report(task, plan, labels, predictions, operations=None):
             f"<p id='filter-status' role='status' aria-live='polite'>Showing {sum(len(c['passes']) for c in result['conditions'])} of {sum(len(c['passes']) for c in result['conditions'])} pass sections.</p>"
             "<p id='filter-empty' hidden>No pass sections match these filters. Reset filters to show all passes.</p></section>"
             + "<nav class='detail-index' data-contents aria-label='Report contents'><h2>Contents</h2><ul>" + "".join(contents) + "</ul></nav>"
-            + "".join(pages) + "</main>"
+            + "".join(pages) + explorer + deep_findings + "</main>"
             + "<footer class='provenance'><div class='shell'><h2 id='provenance-heading'>Provenance</h2><p>Canonical JSON SHA-256 digests bind the task, plan, references, selected prediction set and any supplied operation records. "
             "The evaluator validates planned positions and predictions; the caller is responsible for verifying operation records. "
             "This file includes private inputs and reference labels. Keep it local.</p>"

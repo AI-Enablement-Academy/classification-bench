@@ -20,7 +20,9 @@ Prompt text can include the full task rubric. The offline planner preserves prom
 
 Inputs use `{ "records": [{ "id": "example-1", "input": { "description": "...", "audience": "..." } }] }`. The `input` object's keys must exactly match `input_keys`. An accidental `labels` field on the record is rejected.
 
-Reference files use `{ "records": [{ "id": "example-1", "labels": { "segment": "teams", "urgency": "later" } }] }`. IDs must exactly equal the plan's input IDs; each reference must have exactly the task fields and an allowed value. Reference versions are separate files. Keep an external review record for changes.
+Complete reference files use `{ "records": [{ "id": "example-1", "labels": { "segment": "teams", "urgency": "later" } }] }`. The default evaluator requires IDs to equal the plan's input IDs and every reference to have exactly the task fields and allowed string values. Reference versions are separate files. Keep an external review record for changes.
+
+The Python evaluator also supports explicitly absent or partial references. Call `evaluate(task, plan, labels=None, predictions=saved_predictions)` for unlabeled analysis. To evaluate a supplied partial document, pass `allow_partial_references=True`; the default continues to reject incomplete references. In that mode, missing record IDs, omitted task fields and `null` label values mean unavailable reference labels. An empty `records` list is allowed. Duplicate or unexpected IDs, extra fields, notes, unknown label strings and non-string non-null values remain errors. Unlabeled inputs retain their planned positions and output-validity outcomes. They receive no invented accuracy score.
 
 ## Plan
 
@@ -36,8 +38,35 @@ Use a separate export for each selected attempt set. The evaluator does not sele
 
 ## Evaluation
 
+Complete references retain the existing `schema_version: 1` result, including its source hashes and field structure. Setting `allow_partial_references=True` with complete references produces the same result. The implementation and saved-result compatibility checks are in [core.py](../classification_bench/core.py) and [test_unlabeled_evaluation.py](../tests/test_unlabeled_evaluation.py).
+
 Top-level fields include `source_hashes`, `positions`, `missing`, `invalid`, and `conditions`. Each condition contains `passes`, exact-agreement `pass_score_mean` and `pass_score_range`, and `repeat_comparisons`.
 
 Each pass reports its full `denominator`, `all_field_exact`, `all_field_exact_rate`, missing/invalid counts and field metrics. Each field includes a confusion matrix, `unscored_by_true_label`, and per-label precision/recall/F1/support/TP/FP/FN. Macro-F1 includes all declared labels; zero-division values are defined as zero.
 
 Repeat comparisons report comparable/excluded counts, changed and excluded IDs, flip counts and rates for the entire output vector and for each field. Rates are null if no comparable valid outputs exist. Source hashes bind canonical JSON documents with sorted keys, compact separators and UTF-8 encoding; they are not file-byte hashes.
+
+### Partial and unlabeled evaluation
+
+Missing reference coverage produces `schema_version: 2`. It preserves the full planned `positions` count, each pass's full input `denominator`, and missing/invalid output counts. A prediction is valid only when its entire vector contains every declared field with an allowed label; an individually correct field in an invalid vector does not earn score credit. Each pass also includes `valid` and `valid_rate`, calculated over that full denominator.
+
+Top-level and per-pass `reference_coverage` contain the following values. Coverage counts distinct imported inputs, rather than treating repeats or configurations as new reference cases.
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `partial` if any reference labels are known; otherwise `unlabeled`. |
+| `input_count` | Number of distinct planned input IDs. |
+| `fully_labeled_ids` | IDs with references for every task field, in input order. |
+| `partially_labeled_ids` | IDs with some known task fields, in input order. |
+| `unlabeled_ids` | IDs with no known reference fields, in input order. |
+| `known_field_labels` | Number of known input/field reference labels. |
+| `expected_field_labels` | `input_count` multiplied by the number of task fields. |
+| `fields` | For each task field: `known_ids`, `missing_ids`, `reference_denominator`, `reference_missing` and `reference_coverage`. |
+
+Each pass's `all_field_exact` and `all_field_exact_rate`, and each condition's `pass_score_mean` and `pass_score_range`, are `null` when references are incomplete. They cannot describe whole-dataset accuracy from a partial reference set. A separately named `scored_subset` reports `scope: "fully_labeled_records"`, its exact `ids`, `denominator`, `all_field_exact` and `all_field_exact_rate`. Its denominator includes missing and invalid predictions among those fully referenced inputs. The condition's `scored_subset_score_mean` and `scored_subset_score_range` summarize that same reference subset across repeats. Subset scores are `null` when no fully referenced inputs exist.
+
+Per-field metrics use only inputs with known references for that field. Each field adds `reference_denominator`, `reference_missing`, `reference_coverage`, `correct` and `accuracy`. Confusion, support, precision, recall, F1 and false negatives are computed on the disclosed known-reference denominator. Missing or invalid predictions remain false negatives for known labels; unavailable references add neither support nor false negatives. When a field has no references, `correct`, `accuracy`, `confusion`, `labels` and `macro_f1` are `null`, and `unscored_by_true_label` is an empty object.
+
+Repeat comparisons require valid predictions and remain identical with complete, partial or absent references. An omitted reference document sets `source_hashes.labels` to `null`; a supplied partial or empty document retains its canonical JSON hash. Corrections to labels produce a new evaluation and source hash; they do not modify previous evaluations, predictions or raw evidence. Request lifecycle details such as failed, refused or never-sent remain in the separate [runner evidence](RUNNER.md); the evaluator does not infer those states from a missing prediction.
+
+For offline analysis extensions, `validated_positions(task, plan, predictions)` validates the canonical full plan and returns ordered `record_ids` and `positions`, raw `supplied` predictions, full-vector `valid` predictions and ordered `invalid` position keys. Keys are `(config_id, prompt_id, repeat, case_id)` Python tuples. `validate_reference_labels(labels, task, ids, allow_partial=True)` returns only known non-null field values by case ID. Neither helper creates reference labels or selects a favorable attempt.

@@ -50,7 +50,9 @@ def main(argv=None):
     score = sub.add_parser("evaluate", help="Score saved predictions offline")
     score.add_argument("--task", required=True)
     score.add_argument("--plan", required=True)
-    score.add_argument("--labels", required=True)
+    score.add_argument("--labels", help="Optional offline reference file")
+    score.add_argument("--allow-partial-references", action="store_true",
+                       help="Score only known references and report their coverage explicitly")
     score.add_argument("--predictions", required=True)
     score.add_argument("--out", default="-")
     simulation = sub.add_parser("simulate", help="Run a synthetic offline transport with verified evidence")
@@ -74,7 +76,9 @@ def main(argv=None):
         child.add_argument("--out", default="-")
     report = sub.add_parser("report", help="Write a private local HTML report from verified saved evidence")
     report.add_argument("--config", required=True)
-    report.add_argument("--labels", required=True, help="Offline references; never passed to the runner")
+    report.add_argument("--labels", help="Optional offline references; never passed to the runner")
+    report.add_argument("--allow-partial-references", action="store_true",
+                        help="Show known-reference scores separately from the full planned denominator")
     report.add_argument("--out", required=True)
     catalog = sub.add_parser("catalog", help="Fetch a public endpoint snapshot without credentials or inference")
     catalog.add_argument("--model", required=True)
@@ -98,8 +102,10 @@ def main(argv=None):
         elif args.command == "plan":
             output = build_plan(_read(args.task), _read(args.experiment), _read(args.inputs))
         elif args.command == "evaluate":
-            output = evaluate(_read(args.task), _read(args.plan), _read(args.labels),
-                              _read(args.predictions))
+            output = evaluate(_read(args.task), _read(args.plan),
+                              _read(args.labels) if args.labels else None,
+                              _read(args.predictions),
+                              allow_partial_references=args.allow_partial_references)
         elif args.command == "simulate":
             from .run import simulate
             output = simulate(args.config)
@@ -120,8 +126,10 @@ def main(argv=None):
             from .report import generate_report
             # Verified export is performed before the evaluator opens references.
             snapshot = report_snapshot(args.config)
-            html = generate_report(snapshot["task"], snapshot["plan"], _read(args.labels),
-                                   snapshot["predictions"], snapshot["operations"])
+            html = generate_report(snapshot["task"], snapshot["plan"],
+                                   _read(args.labels) if args.labels else None,
+                                   snapshot["predictions"], snapshot["operations"],
+                                   allow_partial_references=args.allow_partial_references)
             _write_private_html(args.out, html)
             output = {"report": str(Path(args.out).resolve()), "visibility": "private-local"}
             _write("-", output)

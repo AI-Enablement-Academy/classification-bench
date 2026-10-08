@@ -132,6 +132,47 @@ def _validate_labels(labels, task, ids):
     return result
 
 
+def validate_reference_labels(labels, task, ids, *, allow_partial=False):
+    """Return only known reference labels; None explicitly means unlabeled.
+
+    A supplied incomplete document needs explicit opt-in. Unknown label values,
+    unknown IDs and duplicate IDs remain errors in every mode.
+    """
+    validate_task(task)
+    if type(allow_partial) is not bool:
+        raise ValidationError("allow_partial: expected boolean")
+    input_ids = list(ids)
+    for rid in input_ids:
+        _id(rid, "reference input ID")
+    _unique(input_ids, "reference input IDs")
+    id_set = set(input_ids)
+    if labels is None:
+        return {}
+    if not allow_partial:
+        return _validate_labels(labels, task, id_set)
+    _object(labels, {"records"}, {"records"}, "labels")
+    records = _list(labels["records"], "labels.records", minimum=0)
+    fields = {f["name"]: set(f["labels"]) for f in task["fields"]}
+    result = {}
+    for record in records:
+        _object(record, {"id", "labels"}, {"id", "labels"}, "label record")
+        rid = _id(record["id"], "label record.id")
+        if rid not in id_set:
+            raise ValidationError(f"labels: unexpected input ID {rid}")
+        if rid in result:
+            raise ValidationError("labels: duplicate ID")
+        _object(record["labels"], fields, set(), f"labels for {rid}")
+        known = {}
+        for name, value in record["labels"].items():
+            if value is None:
+                continue
+            if not isinstance(value, str) or value not in fields[name]:
+                raise ValidationError(f"labels for {rid}: unknown label")
+            known[name] = value
+        result[rid] = known
+    return result
+
+
 def _metrics(positions, fields):
     denominator = len(positions)
     exact = sum(pred == truth for truth, pred in positions if pred is not None)
@@ -164,7 +205,7 @@ def _metrics(positions, fields):
             "fields": per_field}
 
 
-def evaluate(task, plan, labels, predictions):
+def _validated_plan(task, plan):
     validate_task(task)
     _object(plan, {"schema_version", "task", "experiment", "requests"},
             {"schema_version", "task", "experiment", "requests"}, "plan")
@@ -182,18 +223,21 @@ def evaluate(task, plan, labels, predictions):
     if not first_items or build_plan(task, experiment, {"records": first_items}) != plan:
         raise ValidationError("plan: requests or request IDs do not match canonical plan")
     record_ids = [item["id"] for item in first_items]
-    ids = {item["id"] for req in plan["requests"] for item in req["items"]}
-    reference = _validate_labels(labels, task, ids)
-    _object(predictions, {"records"}, {"records"}, "predictions")
-    if not isinstance(predictions["records"], list):
-        raise ValidationError("predictions.records: expected list")
-    expected = {}
+    positions = []
     for req in plan["requests"]:
         for item in req["items"]:
             key = (req["config_id"], req["prompt_id"], req["repeat"], item["id"])
-            if key in expected:
-                raise ValidationError("plan: duplicate prediction position")
-            expected[key] = reference[item["id"]]
+            positions.append(key)
+    if len(positions) != len(set(positions)):
+        raise ValidationError("plan: duplicate prediction position")
+    return record_ids, positions
+
+
+def _validated_predictions(task, predictions, positions):
+    _object(predictions, {"records"}, {"records"}, "predictions")
+    if not isinstance(predictions["records"], list):
+        raise ValidationError("predictions.records: expected list")
+    expected = set(positions)
     supplied = {}
     for record in predictions["records"]:
         _object(record, {"config_id", "prompt_id", "repeat", "id", "prediction"},
@@ -215,20 +259,107 @@ def evaluate(task, plan, labels, predictions):
     for key, value in supplied.items():
         if not isinstance(value, dict) or set(value) != set(allowed) or any(
                 not isinstance(v, str) or v not in allowed[k] for k, v in value.items()):
-            invalid.append({"config_id": key[0], "prompt_id": key[1], "repeat": key[2], "id": key[3]})
+            invalid.append(key)
         else:
             valid[key] = value
+    return {"supplied": supplied, "valid": valid, "invalid": invalid}
+
+
+def validated_positions(task, plan, predictions):
+    """Validate a canonical plan and return full membership and output states.
+
+    Position keys are (config_id, prompt_id, repeat, case_id) tuples. Supplied
+    values retain raw invalid predictions; valid contains only full allowed
+    vectors. No reference labels are needed for this analysis boundary.
+    """
+    record_ids, positions = _validated_plan(task, plan)
+    return {"record_ids": record_ids, "positions": positions,
+            **_validated_predictions(task, predictions, positions)}
+
+
+def _reference_coverage(record_ids, reference, fields):
+    names = [field["name"] for field in fields]
+    fully_labeled = [rid for rid in record_ids if len(reference.get(rid, {})) == len(names)]
+    partial = [rid for rid in record_ids if 0 < len(reference.get(rid, {})) < len(names)]
+    unlabeled = [rid for rid in record_ids if not reference.get(rid)]
+    field_coverage = {}
+    for name in names:
+        known = [rid for rid in record_ids if name in reference.get(rid, {})]
+        missing = [rid for rid in record_ids if name not in reference.get(rid, {})]
+        field_coverage[name] = {"known_ids": known, "missing_ids": missing,
+                                "reference_denominator": len(known), "reference_missing": len(missing),
+                                "reference_coverage": len(known) / len(record_ids)}
+    return {"status": "partial" if fully_labeled or partial else "unlabeled",
+            "input_count": len(record_ids), "fully_labeled_ids": fully_labeled,
+            "partially_labeled_ids": partial, "unlabeled_ids": unlabeled,
+            "known_field_labels": sum(len(reference.get(rid, {})) for rid in record_ids),
+            "expected_field_labels": len(record_ids) * len(names), "fields": field_coverage}
+
+
+def _incomplete_metrics(positions, fields, coverage):
+    complete_positions = [(truth, pred) for truth, pred in positions if len(truth) == len(fields)]
+    subset = {"scope": "fully_labeled_records", "ids": coverage["fully_labeled_ids"],
+              "denominator": len(complete_positions), "all_field_exact": None,
+              "all_field_exact_rate": None}
+    if complete_positions:
+        metrics = _metrics(complete_positions, fields)
+        subset.update(all_field_exact=metrics["all_field_exact"],
+                      all_field_exact_rate=metrics["all_field_exact_rate"])
+    per_field = {}
+    for field in fields:
+        name = field["name"]
+        field_positions = [({name: truth[name]}, {name: pred[name]} if pred is not None else None)
+                           for truth, pred in positions if name in truth]
+        denominator = len(field_positions)
+        if denominator:
+            metrics = _metrics(field_positions, [field])
+            stats = {**metrics["fields"][name], "correct": metrics["all_field_exact"],
+                     "accuracy": metrics["all_field_exact_rate"]}
+        else:
+            stats = {"correct": None, "accuracy": None, "confusion": None,
+                     "unscored_by_true_label": {}, "labels": None, "macro_f1": None}
+        per_field[name] = {**stats, "reference_denominator": denominator,
+                           "reference_missing": len(positions) - denominator,
+                           "reference_coverage": denominator / len(positions)}
+    return {"denominator": len(positions), "all_field_exact": None, "all_field_exact_rate": None,
+            "scored_subset": subset, "fields": per_field, "reference_coverage": coverage}
+
+
+def evaluate(task, plan, labels=None, predictions=None, *, allow_partial_references=False):
+    """Score complete references, or explicitly analyze unavailable references.
+
+    Complete-reference output remains schema 1. Schema 2 retains the full planned
+    denominator and publishes only clearly scoped known-reference metrics.
+    """
+    if type(allow_partial_references) is not bool:
+        raise ValidationError("allow_partial_references: expected boolean")
+    record_ids, expected = _validated_plan(task, plan)
+    reference = validate_reference_labels(labels, task, record_ids, allow_partial=allow_partial_references)
+    output = _validated_predictions(task, predictions, expected)
+    supplied, valid = output["supplied"], output["valid"]
+    invalid = [{"config_id": key[0], "prompt_id": key[1], "repeat": key[2], "id": key[3]}
+               for key in output["invalid"]]
+    field_names = {field["name"] for field in task["fields"]}
+    complete = set(reference) == set(record_ids) and all(set(reference[rid]) == field_names for rid in record_ids)
+    coverage = None if complete else _reference_coverage(record_ids, reference, task["fields"])
+    experiment = plan["experiment"]
     results = []
     for config in experiment["configs"]:
         for prompt in experiment["prompts"]:
             passes = []
             for repeat in range(1, experiment["repeats"] + 1):
-                positions = [(reference[rid], valid.get((config["id"], prompt["id"], repeat, rid)))
+                positions = [(reference.get(rid, {}), valid.get((config["id"], prompt["id"], repeat, rid)))
                              for rid in record_ids]
-                passes.append({"repeat": repeat, **_metrics(positions, task["fields"]),
+                metrics = (_metrics(positions, task["fields"]) if complete else
+                           _incomplete_metrics(positions, task["fields"], coverage))
+                passes.append({"repeat": repeat, **metrics,
                                "missing": sum((config["id"], prompt["id"], repeat, rid) not in supplied for rid in record_ids),
                                "invalid": sum((config["id"], prompt["id"], repeat, rid) in supplied and
                                               (config["id"], prompt["id"], repeat, rid) not in valid for rid in record_ids)})
+                if not complete:
+                    entry = passes[-1]
+                    entry["valid"] = entry["denominator"] - entry["missing"] - entry["invalid"]
+                    entry["valid_rate"] = entry["valid"] / entry["denominator"]
             comparisons = []
             for a in range(1, experiment["repeats"] + 1):
                 for b in range(a + 1, experiment["repeats"] + 1):
@@ -252,11 +383,20 @@ def evaluate(task, plan, labels, predictions):
                                         "fields": fields})
             scores = [p["all_field_exact_rate"] for p in passes]
             results.append({"config_id": config["id"], "prompt_id": prompt["id"], "passes": passes,
-                            "pass_score_mean": sum(scores) / len(scores),
-                            "pass_score_range": [min(scores), max(scores)],
+                            "pass_score_mean": sum(scores) / len(scores) if complete else None,
+                            "pass_score_range": [min(scores), max(scores)] if complete else None,
                             "repeat_comparisons": comparisons})
-    return {"schema_version": 1,
+            if not complete:
+                subset_scores = [entry["scored_subset"]["all_field_exact_rate"] for entry in passes]
+                available = bool(coverage["fully_labeled_ids"])
+                results[-1]["scored_subset_score_mean"] = sum(subset_scores) / len(subset_scores) if available else None
+                results[-1]["scored_subset_score_range"] = [min(subset_scores), max(subset_scores)] if available else None
+    result = {"schema_version": 1 if complete else 2,
             "source_hashes": {"task": _digest(task), "plan": _digest(plan),
-                              "labels": _digest(labels), "predictions": _digest(predictions)},
+                              "labels": _digest(labels) if labels is not None else None,
+                              "predictions": _digest(predictions)},
             "positions": len(expected), "missing": len(expected) - len(supplied),
             "invalid": invalid, "conditions": results}
+    if not complete:
+        result["reference_coverage"] = coverage
+    return result

@@ -273,7 +273,7 @@ class ReportUxTests(unittest.TestCase):
         self.assertNotIn("<script>alert(2)</script>", html)
         ids = [node.attrs["id"] for node in page.descendants() if "id" in node.attrs]
         self.assertEqual(len(ids), len(set(ids)))
-        targets = [node.attrs["href"][1:] for node in page.descendants("a")
+        targets = [node.attrs["href"].split("?", 1)[0][1:] for node in page.descendants("a")
                    if node.attrs.get("href", "").startswith("#")]
         self.assertTrue(targets)
         self.assertTrue(set(targets).issubset(set(ids)))
@@ -295,7 +295,9 @@ class ReportUxTests(unittest.TestCase):
         request_id = self.operations[0]["request_id"]
         self.assertIn(request_id, normalized(receipt[0]))
         self.assertIn(_digest(self.operations), normalized(page))
-        supporting = [node for node in page.descendants("details")
+        conditions = [node for node in page.descendants("article")
+                      if "condition" in node.attrs.get("class", "").split()]
+        supporting = [node for condition in conditions for node in condition.descendants("details")
                       if "Supporting cases" in normalized(next(node.descendants("summary")))]
         self.assertEqual(len(supporting), 8)
         self.assertTrue(any("first input" in normalized(node) for node in supporting))
@@ -390,7 +392,9 @@ class ReportUxTests(unittest.TestCase):
                                       if node.attrs.get("id") == "comparison-status")))
         nav = next(node for node in page.descendants("nav")
                    if node.attrs.get("class") == "jump-nav")
-        self.assertEqual(len(list(nav.descendants("a"))), 4)
+        self.assertEqual([node.attrs["href"] for node in nav.descendants("a")],
+                         ["#comparison-heading", "#summary-heading", "#detail-heading",
+                          "#case-explorer-heading", "#deep-findings", "#provenance-heading"])
 
     def test_declared_model_groups_are_distinct_from_adapter_categories(self):
         self.experiment["configs"][0]["model_type"] = "llm"

@@ -54,7 +54,11 @@ The manifest declares one reference status:
 
 `references/coverage.json` always lists each input ID and its exact `missing_fields`. Missing reference labels do not become model errors or invented ground truth. A semantic abstention is an explicit allowed label chosen by your task policy, such as `needs_review`; invalid or absent model output remains a separate lifecycle/evaluation state under [FORMATS.md](FORMATS.md).
 
-For the complete-reference scoring command in the example below, use `references/labels.json`. Partial and unlabeled scoring require an evaluator mode that explicitly accounts for missing reference coverage. They cannot be represented as fully labeled accuracy results. A corrected reference creates a fresh imported directory and a new evaluation; preserve the old directory and evaluation as historical evidence.
+For complete-reference scoring, use `references/labels.json`. Omit `--labels` from `evaluate` or `report` for an unlabeled run. The evaluator retains every planned position, output validity and repeat comparison; reference accuracy is unavailable. The report can still compare predictions and inspect saved evidence.
+
+For partial references, supply `--labels references/partial-labels.json --allow-partial-references` to either command. Without that flag, an incomplete reference file is rejected. Field scores use only that field's known references and show their coverage. Exact agreement on fully referenced cases is labeled as a scored subset; full-denominator exact agreement remains unavailable until all cases have every reference field. Missing and invalid predictions on known-reference cases remain in those scoring denominators. See [the evaluation result formats](FORMATS.md) for the explicit coverage and subset fields.
+
+A corrected reference creates a fresh imported directory and a new evaluation; preserve the old directory and evaluation as historical evidence.
 
 ## Dataset splits and frozen files
 
