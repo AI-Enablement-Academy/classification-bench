@@ -2,6 +2,8 @@
 
 The matrix runner reuses the [atomic ledger](EXECUTION_API.md) and [verified artifact store](VERIFIED_EXECUTION.md). One orchestrator runs independent configurations concurrently. A private per-database process lock prevents a second orchestrator from multiplying the provider concurrency limit. Configuration declaration order, then prompt, repeat and batch order, is preserved within each configuration.
 
+CLI JSON files written with `--out` and HTML reports are created exclusively with owner-only permissions (`0600`). Existing paths, including symlinks, are rejected. This covers plans containing input text, evaluation results and prediction exports, even when their parent directory is shared. Standard output remains available; when redirecting it, the shell controls the destination permissions. Existing files from earlier versions are not modified automatically.
+
 ## Use your own task
 
 Follow the [custom task walkthrough](CUSTOM_TASK_WALKTHROUGH.md) to define your own task, inputs, separate references, prompts, model configurations, repeat count and batch size. It includes a complete offline command sequence and the additional configuration and authorization required for OpenRouter.

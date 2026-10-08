@@ -15,16 +15,14 @@ def _read(path):
         return json.load(source)
 
 
-def _write(path, value, *, private=False):
+def _write(path, value):
+    """Create owner-only JSON artifacts; existing paths are never overwritten."""
     content = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if path == "-":
         sys.stdout.write(content)
-    elif private:
+    else:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as target:
-            target.write(content)
-    else:
-        with Path(path).open("x", encoding="utf-8") as target:
             target.write(content)
 
 
@@ -165,7 +163,7 @@ def main(argv=None):
                          "status": benchmark.status, "recover": benchmark.recover,
                          "export": benchmark.export_predictions}[args.command]
             output = operation(args.config)
-        _write(getattr(args, "out", "-"), output, private=args.command == "sensitivity")
+        _write(getattr(args, "out", "-"), output)
     except (OSError, json.JSONDecodeError, ValidationError, TypeError, ValueError,
             IsolationError, IsolationUnavailable) as exc:
         parser.exit(2, f"classification-bench: {exc}\n")
