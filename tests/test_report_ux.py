@@ -394,7 +394,8 @@ class ReportUxTests(unittest.TestCase):
                    if node.attrs.get("class") == "jump-nav")
         self.assertEqual([node.attrs["href"] for node in nav.descendants("a")],
                          ["#comparison-heading", "#summary-heading", "#detail-heading",
-                          "#case-explorer-heading", "#deep-findings", "#provenance-heading"])
+                          "#case-explorer-heading", "#deep-findings", "#reference-sensitivity-heading",
+                          "#downloads-heading", "#presentation-heading", "#provenance-heading"])
 
     def test_declared_model_groups_are_distinct_from_adapter_categories(self):
         self.experiment["configs"][0]["model_type"] = "llm"

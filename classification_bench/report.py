@@ -10,6 +10,10 @@ from .core import ValidationError, _digest, evaluate, validate_reference_labels
 from .report_analysis import build_analysis
 from .report_explorer import render_report_explorer
 from .report_findings import build_findings, render_findings
+from .report_metrics import build_field_metrics, render_field_metrics
+from .report_exports import build_report_exports, render_downloads
+from .report_presentation import render_presentation
+from .report_sensitivity import build_sensitivity, render_sensitivity
 from .report_visuals import agreement_duration_plot
 
 
@@ -532,7 +536,7 @@ details{margin-top:1rem}.raw-usage pre{max-height:24rem;overflow:auto;padding:1r
 
 
 def generate_report(task, plan, labels=None, predictions=None, operations=None, *,
-                    allow_partial_references=False):
+                    allow_partial_references=False, scenarios=None, cohort_declarations=None):
     """Return a local HTML report. Inputs and references remain in its case details."""
     result = evaluate(task, plan, labels, predictions,
                       allow_partial_references=allow_partial_references)
@@ -567,6 +571,11 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
                 _number(record[key])
         operation_map[rid].append(record)
 
+    analysis = build_analysis(task, plan, predictions, labels=labels, operations=operations,
+                              cohort_declarations=cohort_declarations)
+    field_metrics = build_field_metrics(analysis)
+    metric_runs = {(run["config_id"], run["prompt_id"], run["repeat"]): run
+                   for run in field_metrics["runs"].values()}
     configs = {x["id"]: x for x in plan["experiment"]["configs"]}
     prompts = {x["id"]: x for x in plan["experiment"]["prompts"]}
     supplied = {(x["config_id"], x["prompt_id"], x["repeat"], x["id"]): x["prediction"]
@@ -719,6 +728,7 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
                         + "<h4>Field agreement and class errors</h4>"
                         + _table(field_headers, field_rows,
                                  caption=f"Field agreement for {cid}, {pid}, pass {repeat}", row_header=True, numeric_columns=(1,))
+                        + render_field_metrics(metric_runs[(cid, pid, repeat)], id_prefix=pass_anchor + "-metrics")
                         + "<h4>Request evidence</h4>" + _operation_summary(ops, len(requests), currency)
                         + "<details><summary>Supporting cases (private input text and references)</summary>"
                         + _table(("Case", "Output", "Agreement", "Reference", "Prediction", "Input"), case_rows,
@@ -1047,9 +1057,15 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
                      "<p id='plot-empty'>Full-denominator agreement plot unavailable: complete reference coverage is required. "
                      "Recorded duration and cost remain available in the comparison table.</p>"
                      "<p id='plot-status' class='status-line' role='status' aria-live='polite'></p></section>")
-    analysis = build_analysis(task, plan, predictions, labels=labels, operations=operations)
     explorer = render_report_explorer(analysis)
-    deep_findings = render_findings(build_findings(analysis))
+    finding_data = build_findings(analysis)
+    deep_findings = render_findings(finding_data)
+    sensitivity_data = build_sensitivity(task, plan, predictions, labels, scenarios)
+    sensitivity = render_sensitivity(sensitivity_data)
+    downloads = render_downloads(build_report_exports(analysis, findings=finding_data,
+                                 field_metrics=field_metrics, sensitivity=sensitivity_data))
+    presentation = render_presentation(analysis, finding_data, sensitivity=sensitivity_data,
+                                      field_metrics=field_metrics)
     if complete_references:
         reference_notice = ""
         comparison_scope = "Exact agreement uses every planned position. Missing and invalid predictions earn no credit."
@@ -1083,6 +1099,8 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
             "<nav class='jump-nav' aria-label='Report sections'><div class='shell'><a href='#comparison-heading'>Comparison</a>"
             "<a href='#summary-heading'>Whole experiment</a><a href='#detail-heading'>Pass evidence</a>"
             "<a href='#case-explorer-heading'>Case explorer</a><a href='#deep-findings'>Findings and follow-up</a>"
+            "<a href='#reference-sensitivity-heading'>Sensitivity</a><a href='#downloads-heading'>Downloads</a>"
+            "<a href='#presentation-heading'>Presentation</a>"
             "<a href='#provenance-heading'>Provenance</a></div></nav>"
             "<main id='main-content' class='shell'>"
             "<section class='comparison-section' aria-labelledby='comparison-heading'><div class='section-intro'>"
@@ -1126,7 +1144,7 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
             f"<p id='filter-status' role='status' aria-live='polite'>Showing {sum(len(c['passes']) for c in result['conditions'])} of {sum(len(c['passes']) for c in result['conditions'])} pass sections.</p>"
             "<p id='filter-empty' hidden>No pass sections match these filters. Reset filters to show all passes.</p></section>"
             + "<nav class='detail-index' data-contents aria-label='Report contents'><h2>Contents</h2><ul>" + "".join(contents) + "</ul></nav>"
-            + "".join(pages) + explorer + deep_findings + "</main>"
+            + "".join(pages) + explorer + deep_findings + sensitivity + downloads + presentation + "</main>"
             + "<footer class='provenance'><div class='shell'><h2 id='provenance-heading'>Provenance</h2><p>Canonical JSON SHA-256 digests bind the task, plan, references, selected prediction set and any supplied operation records. "
             "The evaluator validates planned positions and predictions; the caller is responsible for verifying operation records. "
             "This file includes private inputs and reference labels. Keep it local.</p>"

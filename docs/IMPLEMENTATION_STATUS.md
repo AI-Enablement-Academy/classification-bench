@@ -1,4 +1,14 @@
 # Implementation status: 2026-10-08
+## Shared analysis and presentation, 2026-10-08
+
+The report now shares deterministic findings with an eleven-slide [presentation](PRESENTATION.md), [hypothetical reference sensitivity](REFERENCE_SENSITIVITY.md), full class metrics and [allowlisted downloads](REPORT_EXPORTS.md). Class tables expose support, TP/FP/FN, precision, recall, F1, confusion and missing/invalid outcomes, with coverage and undefined ratios disclosed. Sensitivity compares explicit operator alternatives against unchanged saved predictions and references. Downloads offer pseudonymous and private JSON archives with exact byte hashes; neither mode includes opaque provider output.
+
+Presentation controls preserve exact run/case selections, expose every finding and return to supporting evidence. Keyboard, focus, reduced-motion, print and no-JavaScript behavior have offline coverage. These checks do not establish rendered typography, layout or recruitment-level visual parity. The [inspection record](REPORT_PRESENTATION_CHECK.md) names fresh fictional fixtures and the outstanding visual gate.
+
+The final full offline suite passed 388 tests in 38.998 seconds without skips (exit 0; `/tmp/classification-presentation-verified-20261008.log`). Independent sensitivity, presentation and export/CLI reviews returned APPROVE. Review corrected sensitivity output permissions to 0600 with exclusive creation. No inference, credential copying or source-project mutation occurred.
+
+The broader goal remains active: synchronized report-wide filters, case search, richer controlled comparisons and cohort presentation, operator/live route acceptance, and exact-artifact rendered verification remain required. Deep analysis and visual quality apply to every user-defined task, not only the recruitment example.
+
 ## Optional references and evidence-linked analysis, 2026-10-08
 
 The evaluator and CLI now support absent references and explicitly opted-in partial references. Schema 2 separates reference coverage, known-field/subset scores and full planned output counts; whole-run accuracy remains unavailable with incomplete references. Complete-reference schema 1 outputs retain their prior canonical bytes. An independent review compared 100 generated complete evaluations with the previous evaluator and checked 1,824 partial-reference support/FN calculations without finding a discrepancy.

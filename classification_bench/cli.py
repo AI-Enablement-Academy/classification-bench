@@ -15,10 +15,14 @@ def _read(path):
         return json.load(source)
 
 
-def _write(path, value):
+def _write(path, value, *, private=False):
     content = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if path == "-":
         sys.stdout.write(content)
+    elif private:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+            target.write(content)
     else:
         with Path(path).open("x", encoding="utf-8") as target:
             target.write(content)
@@ -55,6 +59,14 @@ def main(argv=None):
                        help="Score only known references and report their coverage explicitly")
     score.add_argument("--predictions", required=True)
     score.add_argument("--out", default="-")
+    sensitivity = sub.add_parser("sensitivity", help="Evaluate explicitly hypothetical reference alternatives offline")
+    sensitivity.add_argument("--task", required=True)
+    sensitivity.add_argument("--plan", required=True)
+    sensitivity.add_argument("--predictions", required=True)
+    sensitivity.add_argument("--labels", help="Original offline references; never modified")
+    sensitivity.add_argument("--scenarios", required=True, help="JSON list of declared hypothetical alternatives")
+    sensitivity.add_argument("--allow-partial-references", action="store_true")
+    sensitivity.add_argument("--out", default="-")
     simulation = sub.add_parser("simulate", help="Run a synthetic offline transport with verified evidence")
     simulation.add_argument("--config", required=True)
     recovery = sub.add_parser("simulate-recover", help="Verify saved synthetic receipts without dispatch")
@@ -80,6 +92,8 @@ def main(argv=None):
     report.add_argument("--allow-partial-references", action="store_true",
                         help="Show known-reference scores separately from the full planned denominator")
     report.add_argument("--out", required=True)
+    report.add_argument("--scenarios", help="Optional JSON list of hypothetical reference alternatives")
+    report.add_argument("--cohorts", help="Optional JSON list of explicitly declared run cohorts")
     catalog = sub.add_parser("catalog", help="Fetch a public endpoint snapshot without credentials or inference")
     catalog.add_argument("--model", required=True)
     catalog.add_argument("--provider", required=True)
@@ -106,6 +120,15 @@ def main(argv=None):
                               _read(args.labels) if args.labels else None,
                               _read(args.predictions),
                               allow_partial_references=args.allow_partial_references)
+        elif args.command == "sensitivity":
+            from .report_sensitivity import build_sensitivity
+            task, plan_data = _read(args.task), _read(args.plan)
+            predictions = _read(args.predictions)
+            labels = _read(args.labels) if args.labels else None
+            # The same explicit partial-reference policy applies to every CLI evaluator.
+            evaluate(task, plan_data, labels, predictions,
+                     allow_partial_references=args.allow_partial_references)
+            output = build_sensitivity(task, plan_data, predictions, labels, _read(args.scenarios))
         elif args.command == "simulate":
             from .run import simulate
             output = simulate(args.config)
@@ -129,7 +152,9 @@ def main(argv=None):
             html = generate_report(snapshot["task"], snapshot["plan"],
                                    _read(args.labels) if args.labels else None,
                                    snapshot["predictions"], snapshot["operations"],
-                                   allow_partial_references=args.allow_partial_references)
+                                   allow_partial_references=args.allow_partial_references,
+                                   scenarios=_read(args.scenarios) if args.scenarios else None,
+                                   cohort_declarations=_read(args.cohorts) if args.cohorts else None)
             _write_private_html(args.out, html)
             output = {"report": str(Path(args.out).resolve()), "visibility": "private-local"}
             _write("-", output)
@@ -140,7 +165,7 @@ def main(argv=None):
                          "status": benchmark.status, "recover": benchmark.recover,
                          "export": benchmark.export_predictions}[args.command]
             output = operation(args.config)
-        _write(getattr(args, "out", "-"), output)
+        _write(getattr(args, "out", "-"), output, private=args.command == "sensitivity")
     except (OSError, json.JSONDecodeError, ValidationError, TypeError, ValueError,
             IsolationError, IsolationUnavailable) as exc:
         parser.exit(2, f"classification-bench: {exc}\n")
