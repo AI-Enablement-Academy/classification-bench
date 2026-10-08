@@ -97,9 +97,25 @@ def main(argv=None):
     catalog.add_argument("--model", required=True)
     catalog.add_argument("--provider", required=True)
     catalog.add_argument("--out", required=True)
+    models = sub.add_parser("models", help="Discover public OpenRouter models without credentials or inference")
+    models.add_argument("--query", help="Filter the public model catalog by text")
+    models.add_argument("--offset", type=int, default=0)
+    models.add_argument("--limit", type=int, default=100)
+    models.add_argument("--out", default="-")
     increase = sub.add_parser("budget-increase", help="Apply an explicit, run-bound budget amendment")
     increase.add_argument("--config", required=True)
     increase.add_argument("--authorization", required=True)
+    renewal = sub.add_parser("account-check-renew", help="Append a fresh, evidenced subscription account assertion without dispatch")
+    renewal.add_argument("--config", required=True)
+    renewal.add_argument("--authorization", required=True)
+    renewal.add_argument("--evidence", required=True)
+    renewal.add_argument("--out", default="-")
+    for command in ("aggregate-create", "aggregate-status", "aggregate-increase"):
+        aggregate = sub.add_parser(command, help="Create or inspect an explicit aggregate budget without inference")
+        aggregate.add_argument("--spec", required=True)
+        aggregate.add_argument("--out", default="-")
+        if command == "aggregate-increase":
+            aggregate.add_argument("--authorization", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
@@ -140,9 +156,19 @@ def main(argv=None):
         elif args.command == "catalog":
             from .adapters import fetch_endpoint_snapshot
             output = fetch_endpoint_snapshot(args.model, args.provider)
+        elif args.command == "models":
+            from .adapters import fetch_model_catalog
+            output = fetch_model_catalog(query=args.query, offset=args.offset, limit=args.limit)
         elif args.command == "budget-increase":
             from .benchmark import amend_budget
             output = amend_budget(args.config, args.authorization)
+        elif args.command == "account-check-renew":
+            from .benchmark import renew_account_assertion
+            output = renew_account_assertion(args.config, args.authorization, args.evidence)
+        elif args.command in ("aggregate-create", "aggregate-status", "aggregate-increase"):
+            from .benchmark import aggregate_budget
+            output = aggregate_budget(args.spec, create=args.command == "aggregate-create",
+                                      amendment_path=getattr(args, "authorization", None))
         elif args.command == "report":
             from .benchmark import report_snapshot
             from .report import generate_report

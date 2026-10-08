@@ -5,7 +5,7 @@ persists evidence, reads labels, or treats a transport error as proof of no char
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import hashlib
 from http.client import IncompleteRead
@@ -20,6 +20,17 @@ CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 MAX_RESPONSE_BYTES = 1_000_000
 MAX_CATALOG_BYTES = 2_000_000
 TIMEOUT_SECONDS = 60
+MODEL_CATALOG_URL = "https://openrouter.ai/api/v1/models"
+REASONING_EFFORTS = frozenset(("max", "xhigh", "high", "medium", "low", "minimal", "none"))
+_REASONING_BOUND_SOURCES = {
+    "openai-chat-max-completion-v1": "https://developers.openai.com/api/docs/guides/token-counting",
+    "azure-openai-max-completion-v1": "https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/reasoning",
+}
+_TOKEN_PRICE_KEYS = frozenset(("prompt", "completion", "input_cache_read", "input_cache_write", "input_cache_write_1h"))
+_ZERO_PRICE_KEYS = frozenset(("image", "audio", "audio_output", "image_output", "image_token", "input_audio_cache", "internal_reasoning"))
+_NO_SEARCH_POLICY = {"tools": [], "tool_choice": "none",
+                     "plugins": [{"id": "web", "enabled": False}, {"id": "response-healing", "enabled": False}]}
+ACCOUNT_POLICY_MAX_AGE = timedelta(hours=24)
 
 
 class AdapterError(ValueError):
@@ -103,6 +114,200 @@ def _model_identity(raw, requested_id, source_url, observed_at):
             "response_json": response_json}
 
 
+def _public_json(raw, name):
+    if not isinstance(raw, bytes) or len(raw) > MAX_CATALOG_BYTES:
+        raise AdapterError(f"{name} response must be bounded bytes")
+    try:
+        text = raw.decode("utf-8")
+        value = json.loads(text)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise AdapterError(f"invalid {name} response") from exc
+    if not isinstance(value, dict):
+        raise AdapterError(f"invalid {name} response")
+    return value, text
+
+
+def _reasoning_metadata(value):
+    """Preserve absent/null/list effort semantics; never infer from model names."""
+    if not isinstance(value, dict):
+        raise AdapterError("model reasoning capability must be an object")
+    known = {}
+    for key in ("mandatory", "default_enabled", "supports_max_tokens"):
+        if key in value:
+            if type(value[key]) is not bool:
+                raise AdapterError(f"model reasoning {key} must be boolean")
+            known[key] = value[key]
+    if "supported_efforts" in value:
+        efforts = value["supported_efforts"]
+        if efforts is not None and (not isinstance(efforts, list) or
+                not all(isinstance(x, str) and x for x in efforts) or len(set(efforts)) != len(efforts)):
+            raise AdapterError("invalid model reasoning supported_efforts")
+        known["supported_efforts"] = efforts
+    if "default_effort" in value:
+        effort = value["default_effort"]
+        if not isinstance(effort, str) or not effort:
+            raise AdapterError("invalid model reasoning default_effort")
+        known["default_effort"] = effort
+    return known
+
+
+def fetch_model_catalog(*, catalog_fetch=None, now=None, query=None, offset=0, limit=1000):
+    """Capture one public text-model discovery page, without credentials/inference.
+
+    Catalog controls describe models, not admission to a particular paid route.
+    Paging is explicit: no returned next URL is followed and no page is hidden.
+    """
+    if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 1000:
+        raise AdapterError("catalog offset/limit must be bounded nonnegative/positive integers")
+    if query is not None and (not isinstance(query, str) or not query or len(query) > 1000):
+        raise AdapterError("catalog query must be nonempty text of at most 1000 characters")
+    parameters = {"output_modalities": "text", "offset": offset, "limit": limit}
+    if query is not None:
+        parameters["q"] = query
+    url = MODEL_CATALOG_URL + "?" + parse.urlencode(parameters)
+    fetch = catalog_fetch or _default_catalog_fetch
+    clock = now or (lambda: datetime.now(timezone.utc))
+    try:
+        raw = fetch(url)
+        value, response_json = _public_json(raw, "model catalog")
+        rows, total, links = value.get("data"), value.get("total_count"), value.get("links")
+        if (not isinstance(rows, list) or len(rows) > limit or type(total) is not int or total < 0 or
+                not isinstance(links, dict) or "next" not in links):
+            raise AdapterError("model catalog page/count metadata unavailable")
+        next_link = links["next"]
+        if next_link is not None and (not isinstance(next_link, str) or not next_link):
+            raise AdapterError("invalid model catalog next page")
+        more = offset + len(rows) < total
+        if ((more and (not rows or next_link is None)) or (not more and next_link is not None) or
+                (rows and offset + len(rows) > total)):
+            raise AdapterError("model catalog page is incomplete or inconsistent")
+        models, seen = [], set()
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"]:
+                raise AdapterError("model catalog has an invalid model ID")
+            if row["id"] in seen:
+                raise AdapterError("model catalog has duplicate model IDs")
+            seen.add(row["id"])
+            model = {key: row[key] for key in ("id", "canonical_slug", "name", "context_length", "pricing",
+                                               "supported_parameters", "architecture", "reasoning") if key in row}
+            # Variant and dynamic entries remain visible even when this adapter cannot pin them.
+            try:
+                _catalog_url(row["id"])
+                compatible = True
+                incompatibility = None
+            except AdapterError as exc:
+                compatible, incompatibility = False, str(exc)
+            model["endpoint_snapshot_compatible"] = compatible
+            model["endpoint_snapshot_incompatibility"] = incompatibility
+            model["reasoning_budget_eligibility"] = "requires_pinned_endpoint_snapshot"
+            models.append(model)
+        observed = clock().astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        return {"schema_version": 1, "source_url": url, "observed_at": observed,
+                "response_sha256": hashlib.sha256(raw).hexdigest(), "response_json": response_json,
+                "query": query, "offset": offset, "limit": limit, "models": models,
+                "returned_count": len(models), "total_count": total,
+                "next_offset": offset + len(rows) if more else None,
+                "complete": offset == 0 and len(rows) == total}
+    except (OSError, TimeoutError, UnicodeError, KeyError, TypeError) as exc:
+        raise AdapterError("public model catalog could not be captured") from exc
+
+
+def _endpoint_evidence(raw, model, provider, url, observed_at):
+    value, response_json = _public_json(raw, "endpoint evidence")
+    data = value.get("data")
+    if not isinstance(data, dict) or data.get("id") != model or not isinstance(data.get("endpoints"), list):
+        raise AdapterError("endpoint evidence model mismatch")
+    _unique_endpoint(data, provider)
+    return {"model_id": model, "provider_tag": provider, "source_url": url,
+            "observed_at": observed_at, "response_sha256": hashlib.sha256(raw).hexdigest(),
+            "response_json": response_json}
+
+
+def _reasoning_bound(endpoint, identity):
+    """Selected-route protocol evidence, distinct from effort capability.
+
+    Azure also hosts non-OpenAI models. The declared canonical model author and
+    endpoint name/tag must all match the documented native OpenAI protocol.
+    A max_completion_tokens parameter name alone is not sufficient evidence.
+    """
+    if identity is None or identity["canonical_id"].split("/", 1)[0] != "openai":
+        return None
+    if "max_completion_tokens" not in endpoint.get("supported_parameters", []):
+        return None
+    tag, name = endpoint.get("tag"), endpoint.get("provider_name")
+    if name == "OpenAI" and (tag == "openai" or isinstance(tag, str) and tag.startswith("openai/")):
+        contract = "openai-chat-max-completion-v1"
+    elif name == "Azure" and (tag == "azure" or isinstance(tag, str) and tag.startswith("azure/")):
+        contract = "azure-openai-max-completion-v1"
+    else:
+        return None
+    return {"schema_version": 1, "contract": contract, "source_url": _REASONING_BOUND_SOURCES[contract],
+            "provider_tag": tag, "provider_name": name, "model_author": "openai",
+            "parameter": "max_completion_tokens", "includes_reasoning": True}
+
+
+def _validate_price_schedule(pricing):
+    if not isinstance(pricing, dict) or not {"prompt", "completion"} <= set(pricing):
+        raise AdapterError("missing endpoint token pricing")
+    for key, value in pricing.items():
+        if key == "discount":
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+                raise AdapterError("invalid endpoint pricing discount")
+        elif key == "overrides":
+            if not isinstance(value, list):
+                raise AdapterError("pricing overrides must be a list")
+            for override in value:
+                if (not isinstance(override, dict) or "min_prompt_tokens" not in override or
+                        type(override["min_prompt_tokens"]) is not int or override["min_prompt_tokens"] < 0 or
+                        set(override) - _TOKEN_PRICE_KEYS - {"min_prompt_tokens"}):
+                    raise AdapterError("unsupported pricing override axis/component")
+                for price_key in set(override) - {"min_prompt_tokens"}:
+                    _decimal(override[price_key], f"pricing.overrides.{price_key}")
+        else:
+            _decimal(value, f"pricing.{key}")
+
+
+def _pricing_bound(endpoint, identity, prompt_limit):
+    """Conservative whole-request rates from a fully retained native schedule."""
+    protocol = _reasoning_bound(endpoint, identity)
+    if protocol is None or not {"tools", "tool_choice"} <= set(endpoint["supported_parameters"]):
+        return None
+    prices = endpoint["pricing"]
+    _validate_price_schedule(prices)
+    allowed = _TOKEN_PRICE_KEYS | _ZERO_PRICE_KEYS | {"request", "web_search", "discount", "overrides"}
+    if set(prices) - allowed:
+        raise AdapterError("unknown native pricing component")
+    if _decimal(prices.get("request", "0"), "pricing.request") != 0:
+        raise AdapterError("request fee exceeds enforced zero max_price")
+    for key in _ZERO_PRICE_KEYS & set(prices):
+        if _decimal(prices[key], f"pricing.{key}") != 0:
+            raise AdapterError(f"unbounded price component: {key}")
+    input_keys = _TOKEN_PRICE_KEYS - {"completion"}
+    input_rates = [_decimal(prices[key], f"pricing.{key}") for key in input_keys & set(prices)]
+    completion_rates = [_decimal(prices["completion"], "pricing.completion")]
+    reachable = []
+    for index, override in enumerate(prices.get("overrides", [])):
+        # The published condition is strictly greater; equality cannot activate it.
+        if override["min_prompt_tokens"] < prompt_limit:
+            reachable.append(index)
+            input_rates.extend(_decimal(override[key], f"pricing.overrides.{key}") for key in input_keys & set(override))
+            if "completion" in override:
+                completion_rates.append(_decimal(override["completion"], "pricing.overrides.completion"))
+    search_source = ("https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/web-search"
+                     if protocol["contract"].startswith("azure-") else
+                     "https://developers.openai.com/api/docs/guides/tools-web-search")
+    return {"schema_version": 1, "contract": "native-openai-text-pricing-v1",
+            "provider_protocol": protocol["contract"], "provider_tag": endpoint["tag"],
+            "provider_name": endpoint["provider_name"], "pricing_schedule": json.loads(_json_bytes(prices)),
+            "reachable_override_indices": reachable,
+            "input_rate_ceiling": str(max(input_rates)), "completion_rate_ceiling": str(max(completion_rates)),
+            "search_policy": json.loads(_json_bytes(_NO_SEARCH_POLICY)),
+            "sources": {"pricing": "https://openrouter.ai/docs/guides/overview/models",
+                        "cache": "https://openrouter.ai/docs/guides/best-practices/prompt-caching",
+                        "native_search": search_source,
+                        "plugin_disable": "https://openrouter.ai/docs/guides/features/plugins/overview"}}
+
+
 def _provider_slug(value):
     if (not isinstance(value, str) or not value or value.startswith("/") or value.endswith("/") or
             value.count("/") > 1 or any(not part or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in part)
@@ -137,8 +342,7 @@ def _snapshot_from_endpoint(model, provider, url, endpoint, observed_at):
     # provider.max_price.request=0 is sent regardless, so a billed request fee cannot route.
     pricing = {k: v for k, v in raw_pricing.items() if k != "discount"}
     pricing.setdefault("request", "0")
-    for key, value in pricing.items():
-        _decimal(value, f"pricing.{key}")
+    _validate_price_schedule(raw_pricing)
     supported = endpoint.get("supported_parameters")
     if not isinstance(supported, list):
         raise AdapterError("endpoint parameters unavailable")
@@ -157,7 +361,8 @@ def fetch_endpoint_snapshot(model, provider, *, catalog_fetch=None, model_fetch=
     fetch_model = model_fetch or _default_catalog_fetch
     clock = now or (lambda: datetime.now(timezone.utc))
     try:
-        value = json.loads(fetch(url))
+        raw_endpoint = fetch(url)
+        value, _ = _public_json(raw_endpoint, "endpoint catalog")
         data = value["data"]
         if data["id"] != model or not isinstance(data["endpoints"], list):
             raise AdapterError("catalog model mismatch")
@@ -166,6 +371,13 @@ def fetch_endpoint_snapshot(model, provider, *, catalog_fetch=None, model_fetch=
         snapshot = _snapshot_from_endpoint(model, provider, url, endpoint, observed_at)
         snapshot["model_identity"] = _model_identity(fetch_model(identity_url), model,
                                                       identity_url, observed_at)
+        snapshot["endpoint_evidence"] = _endpoint_evidence(raw_endpoint, model, provider, url, observed_at)
+        bound = _reasoning_bound(endpoint, snapshot["model_identity"])
+        if bound is not None:
+            snapshot["reasoning_bound"] = bound
+        price_bound = _pricing_bound(endpoint, snapshot["model_identity"], snapshot["max_prompt_tokens"])
+        if price_bound is not None:
+            snapshot["pricing_bound"] = price_bound
         return snapshot
     except (OSError, TimeoutError, UnicodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
         raise AdapterError("catalog could not be captured") from exc
@@ -280,7 +492,7 @@ class OpenRouterAdapter:
         self.config = config
         self.model = config["model"]
         settings = config.get("settings", {})
-        if not isinstance(settings, dict) or set(settings) - {"adapter", "provider", "max_output_tokens", "temperature", "top_p", "endpoint_snapshot"}:
+        if not isinstance(settings, dict) or set(settings) - {"adapter", "provider", "max_output_tokens", "temperature", "top_p", "effort", "reasoning", "endpoint_snapshot", "account_policy_assertion"}:
             raise AdapterError("unsupported OpenRouter setting")
         if settings.get("adapter") != "openrouter":
             raise AdapterError("adapter must be openrouter")
@@ -298,6 +510,23 @@ class OpenRouterAdapter:
                 if name not in self.snapshot["supported_parameters"]:
                     raise AdapterError(f"endpoint does not support {name}")
                 self.controls[name] = value
+        self._validate_reasoning_controls(settings)
+        self._account_policy = None
+        if "account_policy_assertion" in settings:
+            policy = settings["account_policy_assertion"]
+            required_policy = {"source", "verified_at", "web_disabled_or_overridable", "response_healing_disabled_or_overridable"}
+            if (not isinstance(policy, dict) or set(policy) != required_policy or
+                    not isinstance(policy["source"], str) or not policy["source"].strip() or len(policy["source"]) > 1000 or
+                    policy["web_disabled_or_overridable"] is not True or
+                    policy["response_healing_disabled_or_overridable"] is not True):
+                raise AdapterError("account policy requires explicit supported operator assertions and source")
+            verified_at = _date(policy["verified_at"])
+            if verified_at.tzinfo is None or verified_at.utcoffset() != timedelta(0):
+                raise AdapterError("account policy verified_at must be an aware UTC timestamp")
+            self._account_policy = {"schema_version": 1, "status": "operator_declared",
+                "assertion": json.loads(_json_bytes(policy)), "assertion_sha256": hashlib.sha256(_json_bytes(policy)).hexdigest(),
+                "expires_at": (verified_at + ACCOUNT_POLICY_MAX_AGE).isoformat().replace("+00:00", "Z"),
+                "bound_condition": "provider_honors_operator_declared_account_policy"}
         self.transport = transport or _default_transport
         self.catalog_fetch = catalog_fetch or _default_catalog_fetch
         self.model_fetch = model_fetch or _default_catalog_fetch
@@ -306,8 +535,8 @@ class OpenRouterAdapter:
 
     def _validate_snapshot(self, snapshot):
         required = {"model_id", "provider_tag", "observed_at", "source_url", "max_prompt_tokens", "max_completion_tokens", "supported_parameters", "pricing"}
-        if not isinstance(snapshot, dict) or not (set(snapshot) == required or
-                set(snapshot) == required | {"model_identity"}):
+        optional = {"model_identity", "endpoint_evidence", "reasoning_bound", "pricing_bound"}
+        if not isinstance(snapshot, dict) or not required <= set(snapshot) or set(snapshot) - required - optional:
             raise AdapterError("endpoint snapshot has missing or unknown fields")
         if snapshot["model_id"] != self.model or snapshot["provider_tag"] != self.provider:
             raise AdapterError("endpoint model/provider mismatch")
@@ -339,6 +568,37 @@ class OpenRouterAdapter:
             if (original["canonical_id"] != identity["canonical_id"] or
                     original["response_sha256"] != sha):
                 raise AdapterError("model identity raw response disagrees with frozen binding")
+        if "endpoint_evidence" in snapshot:
+            evidence = snapshot["endpoint_evidence"]
+            evidence_keys = {"model_id", "provider_tag", "source_url", "observed_at", "response_sha256", "response_json"}
+            if not isinstance(evidence, dict) or set(evidence) != evidence_keys or not isinstance(evidence["response_json"], str):
+                raise AdapterError("endpoint evidence has missing or unknown fields")
+            _date(evidence["observed_at"])
+            try:
+                raw_endpoint = evidence["response_json"].encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise AdapterError("endpoint evidence is not UTF-8") from exc
+            captured = _endpoint_evidence(raw_endpoint, self.model, self.provider, expected_url, evidence["observed_at"])
+            if evidence != captured or evidence["observed_at"] != snapshot["observed_at"]:
+                raise AdapterError("endpoint evidence disagrees with frozen binding")
+            selected = _unique_endpoint(json.loads(raw_endpoint)["data"], self.provider)
+            projected = _snapshot_from_endpoint(self.model, self.provider, expected_url, selected, snapshot["observed_at"])
+            if any(projected[key] != snapshot[key] for key in required):
+                raise AdapterError("endpoint evidence disagrees with frozen capability/pricing")
+            expected_bound = _reasoning_bound(selected, snapshot.get("model_identity"))
+            if "reasoning_bound" in snapshot:
+                declared_bound = snapshot["reasoning_bound"]
+                if (expected_bound is None or not isinstance(declared_bound, dict) or
+                        type(declared_bound.get("schema_version")) is not int or declared_bound != expected_bound):
+                    raise AdapterError("reasoning bound disagrees with captured provider protocol")
+            if "pricing_bound" in snapshot:
+                expected_price_bound = _pricing_bound(selected, snapshot.get("model_identity"), snapshot["max_prompt_tokens"])
+                declared_price_bound = snapshot["pricing_bound"]
+                if (expected_price_bound is None or not isinstance(declared_price_bound, dict) or
+                        type(declared_price_bound.get("schema_version")) is not int or declared_price_bound != expected_price_bound):
+                    raise AdapterError("pricing bound or search policy disagrees with captured evidence")
+        elif "reasoning_bound" in snapshot or "pricing_bound" in snapshot:
+            raise AdapterError("reasoning/pricing bound requires captured endpoint evidence")
         _positive(snapshot["max_prompt_tokens"], "max_prompt_tokens")
         _positive(snapshot["max_completion_tokens"], "max_completion_tokens")
         if self.max_output_tokens > snapshot["max_completion_tokens"]:
@@ -351,8 +611,13 @@ class OpenRouterAdapter:
         prices = snapshot["pricing"]
         if not isinstance(prices, dict) or not {"prompt", "completion", "request"} <= set(prices):
             raise AdapterError("missing endpoint prices")
+        _validate_price_schedule(prices)
+        if "pricing_bound" in snapshot:
+            return  # Full selected-protocol schedule and non-token fees were validated above.
         prompt_price = _decimal(prices["prompt"], "pricing.prompt")
         for key, value in prices.items():
+            if key == "overrides":
+                raise AdapterError("pricing overrides require a documented native pricing bound")
             amount = _decimal(value, f"pricing.{key}")
             if key == "input_cache_read" and amount > prompt_price:
                 raise AdapterError("cache read price exceeds prompt price bound")
@@ -363,6 +628,119 @@ class OpenRouterAdapter:
                 raise AdapterError("request fee exceeds enforced zero max_price")
             if key not in ("prompt", "completion", "input_cache_read", "web_search") and amount != 0:
                 raise AdapterError(f"unbounded price component: {key}")
+
+    @property
+    def requested_controls(self):
+        """Canonical requested request controls, suitable for a frozen manifest."""
+        return json.loads(_json_bytes(self.controls))
+
+    @property
+    def account_policy_prerequisite(self):
+        """Operator evidence, never independent verification of account settings."""
+        return json.loads(_json_bytes(self._account_policy)) if self._account_policy else {
+            "schema_version": 1, "status": "unavailable", "bound_condition": "account_policy_must_be_verified_before_admission"}
+
+    def _verify_account_policy(self):
+        if self._account_policy is None:
+            raise AdapterError("live preflight requires a fresh operator account policy assertion; effective plugin policy is unknown")
+        verified_at = _date(self._account_policy["assertion"]["verified_at"])
+        current = self.now()
+        if not isinstance(current, datetime) or current.tzinfo is None:
+            raise AdapterError("live preflight requires an aware current time")
+        age = current.astimezone(timezone.utc) - verified_at
+        if age < timedelta(0) or age >= ACCOUNT_POLICY_MAX_AGE:
+            raise AdapterError("operator account policy assertion is expired or future-dated")
+        return {"account_policy_assertion_sha256": self._account_policy["assertion_sha256"],
+                "account_policy_status": "operator_declared_current",
+                "account_policy_source": self._account_policy["assertion"]["source"],
+                "bound_condition": self._account_policy["bound_condition"]}
+
+    def _model_reasoning(self, identity):
+        if identity is None:
+            return None
+        data = json.loads(identity["response_json"])["data"]
+        if "reasoning" not in data:
+            return None
+        return _reasoning_metadata(data["reasoning"])
+
+    def _validate_reasoning_controls(self, settings):
+        has_reasoning = "reasoning" in settings or "effort" in settings
+        controls = settings.get("reasoning", {})
+        if "reasoning" in settings and (not isinstance(controls, dict) or not controls):
+            raise AdapterError("reasoning must be a nonempty object")
+        if set(controls) - {"effort", "max_tokens", "enabled", "exclude"}:
+            raise AdapterError("unsupported reasoning setting")
+        controls = dict(controls)
+        if "effort" in settings:
+            if "effort" in controls:
+                raise AdapterError("duplicate reasoning effort declaration")
+            controls["effort"] = settings["effort"]
+        identity = self.snapshot.get("model_identity")
+        if has_reasoning and identity is None:
+            raise AdapterError("reasoning controls require frozen model capability evidence")
+        capabilities = self._model_reasoning(identity)
+        self.reasoning_capabilities = capabilities
+        if has_reasoning and capabilities is None:
+            raise AdapterError("model does not advertise reasoning capability")
+        if has_reasoning and "reasoning" not in self.snapshot["supported_parameters"]:
+            raise AdapterError("endpoint does not support reasoning")
+        for key in ("enabled", "exclude"):
+            if key in controls and type(controls[key]) is not bool:
+                raise AdapterError(f"reasoning {key} must be boolean")
+        if "effort" in controls and "max_tokens" in controls:
+            raise AdapterError("reasoning cannot declare both effort and token budget")
+        effort = controls.get("effort")
+        if "effort" in controls:
+            if not isinstance(effort, str) or effort not in REASONING_EFFORTS:
+                raise AdapterError("invalid reasoning effort")
+            if "supported_efforts" not in capabilities:
+                raise AdapterError("model does not advertise effort selection")
+            supported = capabilities["supported_efforts"]
+            if supported is not None and effort not in supported:
+                raise AdapterError("model does not support the exact requested reasoning effort")
+        if "max_tokens" in controls:
+            budget = _positive(controls["max_tokens"], "reasoning token budget")
+            if not capabilities.get("supports_max_tokens", False):
+                raise AdapterError("model does not advertise reasoning token budget support")
+            if budget >= self.max_output_tokens:
+                raise AdapterError("reasoning token budget must be below total output limit")
+        disabled = controls.get("enabled") is False or effort == "none"
+        if ((controls.get("enabled") is False and (effort not in (None, "none") or "max_tokens" in controls)) or
+                (controls.get("enabled") is True and effort == "none")):
+            raise AdapterError("contradictory reasoning enable/effort/budget settings")
+        if disabled and capabilities is not None and capabilities.get("mandatory", False):
+            raise AdapterError("model reasoning is mandatory and cannot be disabled")
+        if disabled:
+            active = False
+        elif controls.get("enabled") is True or effort is not None or "max_tokens" in controls:
+            active = True
+        elif capabilities is None:
+            active = False  # Unmodified legacy contract; no reasoning claim is added.
+        elif capabilities.get("mandatory", False):
+            active = True
+        elif "default_enabled" in capabilities:
+            active = capabilities["default_enabled"]
+        elif "default_effort" in capabilities:
+            active = capabilities["default_effort"] != "none"
+        else:
+            active = True  # Unknown default is not evidence of a disabled billable control.
+        self.reasoning_active = active
+        self._reasoning_bound_missing = active and self.snapshot.get("reasoning_bound") is None
+        # Old snapshots can retain active model-default metadata without the
+        # newer endpoint protocol binding. Keep their saved results readable;
+        # explicit controls and newly captured snapshots still validate here.
+        if self._reasoning_bound_missing and (has_reasoning or "endpoint_evidence" in self.snapshot):
+            raise AdapterError("enabled/default reasoning requires a documented combined completion token bound for this route")
+        if has_reasoning:
+            self.controls["reasoning"] = controls
+
+    def _verify_live_reasoning(self):
+        # Captured non-reasoning models omit reasoning metadata; an entirely
+        # missing model identity cannot establish that same capability state.
+        if self.snapshot.get("model_identity") is None:
+            raise AdapterError("live execution requires frozen model identity and reasoning capability evidence")
+        if self._reasoning_bound_missing or (self.reasoning_active and self.snapshot.get("reasoning_bound") is None):
+            raise AdapterError("enabled/default reasoning requires a documented combined completion token bound for this route")
 
     def prepare(self, plan, request, prompt):
         if not isinstance(plan, dict) or not isinstance(request, dict) or not isinstance(prompt, dict):
@@ -383,8 +761,9 @@ class OpenRouterAdapter:
                        "Each object has exactly id and prediction. Prediction maps every declared field "
                        "to one of its declared labels. Do not include explanations or markdown.")
         prices = self.snapshot["pricing"]
-        prompt_price = _decimal(prices["prompt"], "pricing.prompt")
-        completion_price = _decimal(prices["completion"], "pricing.completion")
+        price_bound = self.snapshot.get("pricing_bound")
+        prompt_price = _decimal(price_bound["input_rate_ceiling"] if price_bound else prices["prompt"], "pricing.prompt")
+        completion_price = _decimal(price_bound["completion_rate_ceiling"] if price_bound else prices["completion"], "pricing.completion")
         bound = (_decimal(prices["request"], "pricing.request") +
                  self.snapshot["max_prompt_tokens"] * prompt_price +
                  self.max_output_tokens * completion_price)
@@ -403,15 +782,22 @@ class OpenRouterAdapter:
                                            "completion": float(completion_price * 1_000_000),
                                            "request": 0}}}
         body.update(self.controls)
+        # Request plugin overrides; the separate operator prerequisite covers account policy.
+        body["plugins"] = json.loads(_json_bytes(_NO_SEARCH_POLICY["plugins"]))
+        if price_bound:
+            body.update(json.loads(_json_bytes(price_bound["search_policy"])))
         snapshot_hash = hashlib.sha256(_json_bytes(self.snapshot)).hexdigest()
-        return PreparedRequest(_json_bytes(body), reserve, f"openrouter:endpoint:{snapshot_hash}",
+        policy_hash = self._account_policy["assertion_sha256"] if self._account_policy else "unverified"
+        return PreparedRequest(_json_bytes(body), reserve, f"openrouter:endpoint:{snapshot_hash}:account-policy:{policy_hash}",
                                f"openrouter:{self.model}:{self.provider}", request["request_id"], ids)
 
     def verify_live_snapshot(self):
         """Re-read public endpoint catalog immediately before paid admission."""
+        self._verify_live_reasoning()
+        account_policy = self._verify_account_policy()
         try:
             raw = self.catalog_fetch(self.snapshot["source_url"])
-            value = json.loads(raw)
+            value, _ = _public_json(raw, "endpoint catalog")
             data = value["data"]
             if data["id"] != self.model or not isinstance(data["endpoints"], list):
                 raise AdapterError("catalog model mismatch")
@@ -422,7 +808,7 @@ class OpenRouterAdapter:
                 if endpoint[name] != self.snapshot[name]:
                     raise AdapterError(f"endpoint {name} drifted")
             result = {"catalog_sha256": hashlib.sha256(raw).hexdigest(),
-                      "checked_at": self.now().isoformat(), "source_url": self.snapshot["source_url"]}
+                      "checked_at": self.now().isoformat(), "source_url": self.snapshot["source_url"], **account_policy}
             if "model_identity" in self.snapshot:
                 frozen = self.snapshot["model_identity"]
                 identity_raw = self.model_fetch(frozen["source_url"])
@@ -430,6 +816,12 @@ class OpenRouterAdapter:
                                           frozen["observed_at"])
                 if current["canonical_id"] != frozen["canonical_id"]:
                     raise AdapterError("canonical model identity drifted")
+                if self._model_reasoning(current) != self.reasoning_capabilities:
+                    raise AdapterError("model reasoning capability drifted")
+                if "reasoning_bound" in self.snapshot and _reasoning_bound(selected, current) != self.snapshot["reasoning_bound"]:
+                    raise AdapterError("reasoning combined-budget provider protocol drifted")
+                if "pricing_bound" in self.snapshot and _pricing_bound(selected, current, self.snapshot["max_prompt_tokens"]) != self.snapshot["pricing_bound"]:
+                    raise AdapterError("pricing bound/provider/search policy drifted")
                 result["identity_response_sha256"] = current["response_sha256"]
                 result["identity_source_url"] = frozen["source_url"]
             return result
@@ -441,6 +833,8 @@ class OpenRouterAdapter:
             raise AdapterError("prepared request and API key required")
         if not prepared.route == f"openrouter:{self.model}:{self.provider}":
             raise AdapterError("prepared route mismatch")
+        self._verify_live_reasoning()
+        self._verify_account_policy()
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
                    "Accept": "application/json", "X-OpenRouter-Cache": "false"}
         start = time.monotonic_ns()

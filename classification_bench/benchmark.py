@@ -5,7 +5,7 @@ single-attempt operation after a durable admission record.
 """
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, replace
 import json
 import os
@@ -176,8 +176,17 @@ def _adapter(config, supplied=None):
 
 def _load(config_path, adapter=None):
     config, config_bytes = _load_json(config_path)
-    if not isinstance(config, dict) or set(config) != _CONFIG_KEYS or config.get("schema_version") != 1:
-        raise BenchmarkError("benchmark config must use exact v1 fields")
+    if not isinstance(config, dict) or type(config.get("schema_version")) is not int or config["schema_version"] not in (1, 2):
+        raise BenchmarkError("benchmark config must use version 1 or 2")
+    managed = config["schema_version"] == 2
+    if set(config) != (_CONFIG_KEYS | {"aggregate"} if managed else _CONFIG_KEYS):
+        raise BenchmarkError(f"benchmark config must use exact v{config['schema_version']} fields")
+    if managed:
+        terms = config["aggregate"]
+        if (not isinstance(terms, dict) or set(terms) != {"parent_scope", "allocation_id", "phase"}
+                or any(not isinstance(terms[k], str) or not terms[k] for k in ("parent_scope", "allocation_id"))
+                or terms["phase"] not in ("smoke", "full") or terms["parent_scope"] == config["scope"]):
+            raise BenchmarkError("invalid aggregate allocation or phase")
     for key in ("task", "experiment", "inputs", "database", "artifacts"):
         if not isinstance(config[key], str) or not Path(config[key]).is_absolute():
             raise BenchmarkError(f"{key} must be an absolute path")
@@ -245,6 +254,10 @@ def _load(config_path, adapter=None):
                                     "adapter": type(current_adapter).__name__,
                                     **source_digests,
                                     "resolved_controls": cfg.get("settings", {}),
+                                    **({"canonical_request_controls": current_adapter.requested_controls}
+                                       if hasattr(current_adapter, "requested_controls") else {}),
+                                    **({"account_policy_prerequisite": current_adapter.account_policy_prerequisite}
+                                       if hasattr(current_adapter, "account_policy_prerequisite") else {}),
                                     "route": prepared.route, "messages": json.loads(prepared.body).get("messages"),
                                     "retry_policy": "none", "cache_policy": "off",
                                     "schedule": {"ordinal": ordinal, "repeat": request["repeat"],
@@ -254,12 +267,22 @@ def _load(config_path, adapter=None):
                           "adapter": current_adapter, "runtime": current_runtime,
                           "config": cfg, "scope": config["scope"],
                           "fields": plan["task"]["fields"]})
+    if managed:
+        for material in materials:
+            logical = material["request"]["request_id"]
+            storage = digest(canonical_bytes({"run_sha256": binding, "logical_request_id": logical}))
+            material["logical_request_id"] = logical
+            material["request"] = {**material["request"], "request_id": storage}
+            manifest = json.loads(material["manifest"])
+            manifest.update({"request_id": storage, "logical_request_id": logical,
+                             "aggregate": config["aggregate"]})
+            material["manifest"] = canonical_bytes(manifest)
     return config, plan, binding, materials, offline
 
 
 def preflight(config_path, *, adapter=None, api_key=None, worker=None):
     """Check credentials, runtime controls and isolation without admitting work."""
-    _, _, binding, materials, _ = _load(config_path, adapter)
+    config, _, binding, materials, _ = _load(config_path, adapter)
     checks = []
     seen = set()
     for material in materials:
@@ -276,7 +299,13 @@ def preflight(config_path, *, adapter=None, api_key=None, worker=None):
             stage = "authentication"
             runtime.credential(api_key)
             stage = "runtime, provider controls and isolation"
-            source = runtime.preflight(material["adapter"], material["prepared"], worker)
+            if getattr(runtime, "requires_account_assertion", False):
+                from .subscription_assertions import SubscriptionAssertionLedger
+                guard = SubscriptionAssertionLedger.read_current(config["database"], config["artifacts"],
+                            (config["scope"], binding, material["config"]["id"]))
+                source = runtime.preflight(material["adapter"], material["prepared"], worker, account_assertion=guard)
+            else:
+                source = runtime.preflight(material["adapter"], material["prepared"], worker)
             checks.append({"config_id": config_id, "ready": True, "evidence": source})
         except Exception as exc:
             # Runtime exception text may include account/credential details.
@@ -296,7 +325,8 @@ def preview(config_path, *, adapter=None):
             "sum_request_bounds": sum(x["prepared"].reserve_microusd for x in materials),
             "max_request_bound": max(x["prepared"].reserve_microusd for x in materials),
             "offline": offline,
-            "requests": [{"request_id": x["request"]["request_id"],
+            "requests": [{"request_id": x.get("logical_request_id", x["request"]["request_id"]),
+                          **({"storage_request_id": x["request"]["request_id"]} if "logical_request_id" in x else {}),
                           "config_id": x["request"]["config_id"],
                           "prompt_id": x["request"]["prompt_id"],
                           "repeat": x["request"]["repeat"],
@@ -310,7 +340,8 @@ def preview(config_path, *, adapter=None):
                          for x in materials]}
 
 
-def _bind(verified, binding):
+def _bind(verified, binding, config=None):
+    verified.benchmark_run_sha256 = binding
     with verified.execution.coordinator._transaction() as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS benchmark_binding (
             singleton INTEGER PRIMARY KEY CHECK(singleton=1), run_sha256 TEXT NOT NULL)""")
@@ -349,6 +380,39 @@ def _bind(verified, binding):
             BEFORE UPDATE ON benchmark_preflight_errors BEGIN SELECT RAISE(ABORT,'immutable preflight event'); END""")
         conn.execute("""CREATE TRIGGER IF NOT EXISTS benchmark_preflight_errors_no_delete
             BEFORE DELETE ON benchmark_preflight_errors BEGIN SELECT RAISE(ABORT,'immutable preflight event'); END""")
+        managed = config is not None and config["schema_version"] == 2
+        if managed:
+            if conn.execute("SELECT 1 FROM benchmark_binding").fetchone():
+                raise BenchmarkError("managed workflow cannot reuse a legacy run database")
+            conn.execute("""CREATE TABLE IF NOT EXISTS benchmark_managed_runs (
+                run_sha256 TEXT PRIMARY KEY, scope TEXT UNIQUE NOT NULL,
+                parent_scope TEXT NOT NULL, allocation_id TEXT UNIQUE NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS benchmark_managed_control (
+                run_sha256 TEXT PRIMARY KEY REFERENCES benchmark_managed_runs(run_sha256),
+                state TEXT NOT NULL CHECK(state IN ('running','paused_budget','stopped_budget')))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS benchmark_managed_control_events (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_sha256 TEXT NOT NULL REFERENCES benchmark_managed_runs(run_sha256),
+                state TEXT NOT NULL, reason TEXT NOT NULL)""")
+            for table in ("benchmark_managed_runs", "benchmark_managed_control_events"):
+                for action in ("UPDATE", "DELETE"):
+                    conn.execute(f"CREATE TRIGGER IF NOT EXISTS {table}_no_{action.lower()} "
+                                 f"BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT,'immutable managed binding'); END")
+            terms = (binding, config["scope"], config["aggregate"]["parent_scope"], config["aggregate"]["allocation_id"])
+            existing = conn.execute("SELECT * FROM benchmark_managed_runs WHERE run_sha256=? OR scope=? OR allocation_id=?",
+                                    (binding, config["scope"], config["aggregate"]["allocation_id"])).fetchall()
+            if existing and (len(existing) != 1 or tuple(existing[0]) != terms):
+                raise BenchmarkError("managed run binding changed")
+            if not existing:
+                if conn.execute("""SELECT 1 FROM execution_requests x LEFT JOIN benchmark_managed_runs r
+                                   ON x.scope=r.scope WHERE r.scope IS NULL LIMIT 1""").fetchone():
+                    raise BenchmarkError("database contains unrelated execution requests")
+                conn.execute("INSERT INTO benchmark_managed_runs VALUES(?,?,?,?)", terms)
+                conn.execute("INSERT INTO benchmark_managed_control VALUES(?,'running')", (binding,))
+            verified.benchmark_managed_run = binding
+            return
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='benchmark_managed_runs'").fetchone():
+            raise BenchmarkError("legacy run cannot reuse a managed workflow database")
         row = conn.execute("SELECT run_sha256 FROM benchmark_binding WHERE singleton=1").fetchone()
         if row is None:
             if conn.execute("SELECT COUNT(*) FROM execution_requests").fetchone()[0]:
@@ -363,19 +427,68 @@ def _bind(verified, binding):
 
 def _control(verified):
     with verified.execution.coordinator._transaction() as conn:
-        row = conn.execute("SELECT state FROM benchmark_run_control WHERE singleton=1").fetchone()
+        binding = getattr(verified, "benchmark_managed_run", None)
+        row = (conn.execute("SELECT state FROM benchmark_managed_control WHERE run_sha256=?", (binding,)).fetchone()
+               if binding else conn.execute("SELECT state FROM benchmark_run_control WHERE singleton=1").fetchone())
     return row["state"]
 
 
-def _set_control(verified, state, reason):
+def _effective_admission_block_in(verified, conn, scope, *, parent_scope=None):
+    """Read the local or inherited first block from one ledger snapshot."""
+    block = None
+    if conn.execute("SELECT 1 FROM scopes WHERE scope=?", (scope,)).fetchone():
+        verified.execution.budget._scope(conn, scope)
+        block = verified.execution._admission_block_in(conn, scope)
+        allocation = verified.execution.budget._allocation(conn, scope)
+        if allocation is not None:
+            parent_scope = allocation["parent_scope"]
+    elif parent_scope is None:
+        verified.execution.budget._scope(conn, scope)  # An unknown independent scope is an error.
+    if (block is None and parent_scope is not None
+            and conn.execute("SELECT 1 FROM scopes WHERE scope=?", (parent_scope,)).fetchone()):
+        verified.execution.budget._scope(conn, parent_scope)
+        block = verified.execution._admission_block_in(conn, parent_scope)
+    return block
+
+
+def _effective_admission_block(verified, scope, *, parent_scope=None):
     with verified.execution.coordinator._transaction() as conn:
-        current = conn.execute("SELECT state FROM benchmark_run_control WHERE singleton=1").fetchone()[0]
+        return _effective_admission_block_in(verified, conn, scope, parent_scope=parent_scope)
+
+
+def _configured_admission_block(verified, config):
+    parent = config.get("aggregate", {}).get("parent_scope")
+    return _effective_admission_block(verified, config["scope"], parent_scope=parent)
+
+
+def _aggregate_freeze(verified, config):
+    if config["schema_version"] != 2:
+        return None
+    return verified.execution.budget.aggregate_balances(config["aggregate"]["parent_scope"])["freeze"]
+
+
+def _set_control(verified, state, reason, *, budget_scope=None):
+    with verified.execution.coordinator._transaction() as conn:
+        binding = getattr(verified, "benchmark_managed_run", None)
+        current = (conn.execute("SELECT state FROM benchmark_managed_control WHERE run_sha256=?", (binding,)).fetchone()[0]
+                   if binding else conn.execute("SELECT state FROM benchmark_run_control WHERE singleton=1").fetchone()[0])
         if current == "stopped_budget" and state != "stopped_budget":
             raise BenchmarkError("stopped run cannot be resumed")
+        if (budget_scope is not None and state in ("paused_budget", "stopped_budget")
+                and _effective_admission_block_in(verified, conn, budget_scope) is not None):
+            return
+        if budget_scope is not None and state in ("paused_budget", "stopped_budget"):
+            allocation = verified.execution.budget._allocation(conn, budget_scope)
+            if allocation is not None and verified.execution.budget._scope(conn, allocation["parent_scope"])["frozen"]:
+                return
         if current != state:
-            conn.execute("UPDATE benchmark_run_control SET state=? WHERE singleton=1", (state,))
-            conn.execute("INSERT INTO benchmark_run_control_events(state,reason) VALUES(?,?)",
-                         (state, reason))
+            if binding:
+                conn.execute("UPDATE benchmark_managed_control SET state=? WHERE run_sha256=?", (state, binding))
+                conn.execute("INSERT INTO benchmark_managed_control_events(run_sha256,state,reason) VALUES(?,?,?)",
+                             (binding, state, reason))
+            else:
+                conn.execute("UPDATE benchmark_run_control SET state=? WHERE singleton=1", (state,))
+                conn.execute("INSERT INTO benchmark_run_control_events(state,reason) VALUES(?,?)", (state, reason))
 
 
 def _release_claim(verified, claim):
@@ -475,10 +588,16 @@ def _saved_refs(verified, material):
     frozen_fields = ("schema_version", "request_id", "plan_sha256", "run_sha256",
                      "resolved_controls", "retry_policy", "cache_policy", "schedule",
                      "budget_scope")
+    if "logical_request_id" in material:
+        frozen_fields += ("logical_request_id", "aggregate")
+    if isinstance(manifest, dict) and "canonical_request_controls" in manifest:
+        frozen_fields += ("canonical_request_controls",)
+    if isinstance(manifest, dict) and "account_policy_prerequisite" in manifest:
+        frozen_fields += ("account_policy_prerequisite",)
     if (not isinstance(manifest, dict) or not isinstance(body, dict) or
-            any(manifest.get(key) != expected[key] for key in frozen_fields) or
+            any(manifest.get(key) != expected.get(key) for key in frozen_fields) or
             manifest.get("request_sha256") != refs[1].sha256 or
-            body.get("request_id", request["request_id"]) != request["request_id"] or
+            body.get("request_id", material.get("logical_request_id", request["request_id"])) != material.get("logical_request_id", request["request_id"]) or
             body.get("messages") != manifest.get("messages") or
             not isinstance(manifest.get("adapter_source_sha256"), str) or
             re.fullmatch(r"[0-9a-f]{64}", manifest["adapter_source_sha256"]) is None or
@@ -577,8 +696,10 @@ def _record_subscription_block(verified, material, observation):
             "CLI tool isolation violation", "returned model mismatch"):
         reason = parsed["reason"]
     if reason:
-        verified.execution.block_scope(material["scope"], reason,
-                                       observation["response_sha256"])
+        verified.execution.block_scope(material["scope"], reason, observation["response_sha256"])
+        allocation = verified.execution.budget.allocation_for(material["scope"])
+        if allocation is not None:
+            verified.execution.block_scope(allocation["parent_scope"], reason, observation["response_sha256"])
 
 
 def _execute_one(config, material, verified, claim, refs, api_key, worker):
@@ -589,9 +710,20 @@ def _execute_one(config, material, verified, claim, refs, api_key, worker):
     prepared = material["prepared"]
     token = claim["token"]
     # Provider preflight and any isolation proof precede the durable grant.
-    bound_source = runtime.preflight(adapter, prepared, worker)
+    admission_guard = None
+    if getattr(runtime, "requires_account_assertion", False):
+        from .subscription_assertions import SubscriptionAssertionLedger
+        assertions = SubscriptionAssertionLedger(verified.execution, verified.artifact_root)
+        key = (config["scope"], verified.benchmark_run_sha256, material["config"]["id"])
+        guard = assertions.current(*key)
+        bound_source = runtime.preflight(adapter, prepared, worker, account_assertion=guard)
+        def admission_guard(conn):
+            assertions.require_fresh_in(conn, key, guard["revision"], request_id=request_id, admission_token=token)
+    else:
+        bound_source = runtime.preflight(adapter, prepared, worker)
     verified.admit_verified(request_id, token, config["scope"], prepared.reserve_microusd,
-                            refs["manifest_ref"], refs["request_ref"], bound_source=bound_source)
+                            refs["manifest_ref"], refs["request_ref"], bound_source=bound_source,
+                            admission_guard=admission_guard)
     try:
         result = runtime.dispatch(adapter, prepared, api_key, worker)
         if not isinstance(result, TransportResult):
@@ -614,7 +746,7 @@ def _execute_one(config, material, verified, claim, refs, api_key, worker):
             raise BenchmarkError("published response changed between transport and receipt")
         # Original bounded response is now durable; only then parse it.
         try:
-            parsed = runtime.parse(adapter, result, expected_request_id=request_id,
+            parsed = runtime.parse(adapter, result, expected_request_id=material.get("logical_request_id", request_id),
                                    expected_ids=prepared.expected_ids,
                                    expected_model=material["config"]["model"])
         except Exception as exc:
@@ -681,7 +813,7 @@ def _recover_one(verified, material, *, max_objects):
             adapter = material["adapter"]
             try:
                 parsed = material["runtime"].parse(
-                    adapter, result, expected_request_id=request_id,
+                    adapter, result, expected_request_id=material.get("logical_request_id", request_id),
                     expected_ids=prepared.expected_ids,
                     expected_model=material["config"]["model"])
             except Exception as exc:
@@ -718,11 +850,39 @@ def _recover_one(verified, material, *, max_objects):
 
 def _initialize(config, binding, materials):
     verified = VerifiedExecution(config["database"], config["artifacts"])
-    _bind(verified, binding)
-    BudgetLedger(config["database"]).create_scope(config["scope"], config["cap"],
-                                                    config["currency"], config["scale"],
-                                                    "synthetic:offline" if config["currency"] == "SYN"
-                                                    else f"authorization:{config['authorization_file']}")
+    _bind(verified, binding, config)
+    ledger = BudgetLedger(config["database"])
+    source = "synthetic:offline" if config["currency"] == "SYN" else f"authorization:{config['authorization_file']}"
+    if config["schema_version"] == 2:
+        terms = config["aggregate"]
+        if ledger.allocation_for(config["scope"]) is None and (
+                _configured_admission_block(verified, config) or _aggregate_freeze(verified, config)):
+            return verified
+        try:
+            ledger.allocate_child(terms["parent_scope"], config["scope"], terms["allocation_id"],
+                                  config["cap"], binding, source, phase=terms["phase"],
+                                  currency=config["currency"], scale=config["scale"])
+        except BudgetError:
+            # The parent may have been blocked between the initial read and allocation.
+            if ledger.allocation_for(config["scope"]) is None and (
+                    _configured_admission_block(verified, config) or _aggregate_freeze(verified, config)):
+                return verified
+            raise
+    else:
+        ledger.create_scope(config["scope"], config["cap"], config["currency"], config["scale"], source)
+    if any(getattr(material["runtime"], "requires_account_assertion", False) for material in materials):
+        from .subscription_assertions import SubscriptionAssertionLedger
+        assertions = SubscriptionAssertionLedger(verified.execution, verified.artifact_root)
+        seen = set()
+        for material in materials:
+            cfg = material["config"]
+            if cfg["id"] in seen or not getattr(material["runtime"], "requires_account_assertion", False):
+                continue
+            seen.add(cfg["id"])
+            settings = cfg["settings"]
+            assertions.bind_initial(config["scope"], binding, cfg["id"], digest(canonical_bytes(cfg)),
+                                    settings["adapter"], {"extra_usage_disabled": settings["extra_usage_disabled"],
+                                    "verified_at": settings["extra_usage_verified_at"], "source": settings["extra_usage_source"]})
     return verified
 
 
@@ -742,7 +902,8 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
     for material in materials:
         _record_subscription_block(verified, material,
                                    _observation(verified, material["request"]["request_id"]))
-    if _control(verified) != "running":
+    if (_configured_admission_block(verified, config) or _aggregate_freeze(verified, config)
+            or _control(verified) != "running"):
         result = status(config_path, adapter=adapter)
         result["errors"] = []
         return result
@@ -765,7 +926,7 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
         return value
 
     def next_material(config_id):
-        if verified.execution.admission_block(config["scope"]):
+        if _configured_admission_block(verified, config):
             return None
         for material in by_config[config_id]:
             if isinstance(material["adapter"], UnsupportedAdapter):
@@ -792,7 +953,7 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
     worker_count = min(config["max_concurrency"], len(by_config))
     with ThreadPoolExecutor(max_workers=worker_count) as pool:
         while True:
-            if verified.execution.admission_block(config["scope"]):
+            if _configured_admission_block(verified, config):
                 for _, claim in held_claims.values():
                     _release_claim(verified, claim)
                 held_claims.clear()
@@ -858,7 +1019,8 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
                                                for material in incomplete):
                         _set_control(verified, "paused_budget" if
                                      config["on_budget_exhausted"] == "pause" else "stopped_budget",
-                                     f"remaining={remaining}; pending={len(incomplete)}")
+                                     f"remaining={remaining}; pending={len(incomplete)}",
+                                     budget_scope=config["scope"])
                 break
             done, _ = wait(future_info, return_when=FIRST_COMPLETED)
             for future in done:
@@ -900,15 +1062,19 @@ def status(config_path, *, adapter=None):
     parsed = []
     preflight = {}
     admission_block = None
+    aggregate_freeze = None
     if not Path(config["database"]).exists():
         states = ["never_sent"] * len(materials)
         budget = None
         control = "running"
     else:
         verified = VerifiedExecution(config["database"], config["artifacts"])
-        _bind(verified, binding)
+        _bind(verified, binding, config)
         control = _control(verified)
-        admission_block = verified.execution.admission_block(config["scope"])
+        ledger = BudgetLedger(config["database"])
+        allocated = config["schema_version"] == 1 or ledger.allocation_for(config["scope"]) is not None
+        admission_block = _configured_admission_block(verified, config)
+        aggregate_freeze = _aggregate_freeze(verified, config)
         states = []
         for material in materials:
             try:
@@ -924,7 +1090,7 @@ def status(config_path, *, adapter=None):
                 failure = _preflight_error(verified, request_id)
                 if failure:
                     preflight[request_id] = failure
-        budget = BudgetLedger(config["database"]).balances(config["scope"])
+        budget = ledger.balances(config["scope"]) if allocated else None
     counts = {state: states.count(state) for state in sorted(set(states))}
     unsupported_count = sum(isinstance(material["adapter"], UnsupportedAdapter)
                             for material in materials)
@@ -935,6 +1101,7 @@ def status(config_path, *, adapter=None):
         for state, material in zip(states, materials))
     completed = sum(state in ("response_saved", "not_sent", "reconciled") for state in states)
     run_status = ("blocked_safety" if admission_block else
+                  "blocked_budget_freeze" if aggregate_freeze else
                   "stopped_budget" if control == "stopped_budget" else
                   "paused_budget" if control == "paused_budget" else
                   "completed" if completed == len(states) else
@@ -950,6 +1117,8 @@ def status(config_path, *, adapter=None):
         elif state in ("ready", "claimed", "never_sent"):
             if admission_block:
                 reason = admission_block["reason"]
+            elif aggregate_freeze:
+                reason = "aggregate frozen after an above-bound charge; review retained settlement evidence"
             elif isinstance(material["adapter"], UnsupportedAdapter):
                 reason = material["adapter"].reason
             elif material["request"]["request_id"] in preflight:
@@ -961,7 +1130,8 @@ def status(config_path, *, adapter=None):
             elif budget and (budget["frozen"] or
                              budget["remaining"] < material["prepared"].reserve_microusd):
                 reason = "insufficient remaining budget"
-        request_status.append({"request_id": material["request"]["request_id"],
+        request_status.append({"request_id": material.get("logical_request_id", material["request"]["request_id"]),
+                               **({"storage_request_id": material["request"]["request_id"]} if "logical_request_id" in material else {}),
                                "config_id": material["request"]["config_id"],
                                "prompt_id": material["request"]["prompt_id"],
                                "repeat": material["request"]["repeat"],
@@ -974,7 +1144,9 @@ def status(config_path, *, adapter=None):
             "unsupported_requests": unsupported_count,
             "preflight_failed_requests": preflight_count,
             "admission_block": admission_block,
+            **({"aggregate_freeze": aggregate_freeze} if config["schema_version"] == 2 else {}),
             "action_required": "review_safety_block" if admission_block else
+                               "review_budget_freeze" if aggregate_freeze else
                                "amend_budget" if control == "paused_budget" else None,
             "budget": budget, "requests": request_status}
 
@@ -989,11 +1161,15 @@ def amend_budget(config_path, amendment_path, *, adapter=None):
         raise BenchmarkError("budget amendment does not match bound run")
     with _runner_lock(config["database"]):
         verified = _initialize(config, binding, materials)
-        if verified.execution.admission_block(config["scope"]):
+        if _configured_admission_block(verified, config):
             raise BenchmarkError("blocked scope cannot be resumed by increasing its budget")
+        if _aggregate_freeze(verified, config):
+            raise BenchmarkError("frozen aggregate cannot be resumed by increasing its budget")
         if _control(verified) == "stopped_budget":
             raise BenchmarkError("stopped run cannot be resumed or amended")
-        balance = BudgetLedger(config["database"]).increase_cap(
+        ledger = BudgetLedger(config["database"])
+        amend = ledger.increase_allocation if config["schema_version"] == 2 else ledger.increase_cap
+        balance = amend(
             config["scope"], amendment["amendment_id"], amendment["expected_cap"],
             amendment["new_cap"], amendment["authorization_source"])
         if _control(verified) == "paused_budget":
@@ -1060,7 +1236,7 @@ def _export_operations_loaded(config, binding, materials):
     if not Path(config["database"]).exists():
         return []
     verified = VerifiedExecution(config["database"], config["artifacts"])
-    _bind(verified, binding)
+    _bind(verified, binding, config)
     operations = []
     for material in materials:
         request = material["request"]
@@ -1072,7 +1248,7 @@ def _export_operations_loaded(config, binding, materials):
         saved = _saved_refs(verified, material) if state else None
         row = state["request"] if state else None
         entry = state["execution"] if state else None
-        operation = {"request_id": request_id, "config_id": request["config_id"],
+        operation = {"request_id": material.get("logical_request_id", request_id), "config_id": request["config_id"],
                      "prompt_id": request["prompt_id"], "repeat": request["repeat"],
                      "batch_index": request["batch_index"],
                      "ids": [item["id"] for item in request["items"]],
@@ -1163,6 +1339,8 @@ def _export_operations_loaded(config, binding, materials):
                 # but transport metadata and parser outcome remain unavailable.
                 read_artifact(config["artifacts"], response_ref)
                 operation["parsed_status"] = "unavailable"
+        if "logical_request_id" in material:
+            operation["storage_request_id"] = request_id
         operations.append(operation)
     return operations
 
@@ -1216,3 +1394,69 @@ def report_snapshot(config_path, *, adapter=None):
         predictions = _predictions_from_operations(operations)
     return {"task": plan["task"], "plan": plan,
             "predictions": predictions, "operations": operations}
+
+
+def renew_account_assertion(config_path, authorization_path, evidence_path, *, adapter=None):
+    """Append a checked operator declaration; never dispatch or alter run identity."""
+    config, _, binding, materials, _ = _load(config_path, adapter)
+    if config["currency"] != "REQ":
+        raise BenchmarkError("account assertions apply only to subscription request scopes")
+    authorization, _ = _load_json(authorization_path)
+    if (not isinstance(authorization, dict) or authorization.get("run_sha256") != binding
+            or authorization.get("scope") != config["scope"]):
+        raise BenchmarkError("account assertion renewal does not match bound run")
+    with _runner_lock(config["database"]):
+        verified = _initialize(config, binding, materials)
+        from .subscription_assertions import SubscriptionAssertionLedger
+        ledger = SubscriptionAssertionLedger(verified.execution, verified.artifact_root)
+        with Path(evidence_path).open("rb") as source:
+            evidence = source.read(1_000_001)
+        return ledger.renew(authorization, evidence)
+
+
+def aggregate_budget(spec_path, *, create=False, amendment_path=None):
+    """Create or inspect explicit aggregate terms without model dispatch."""
+    spec, raw = _load_json(spec_path)
+    keys = {"schema_version", "database", "scope", "cap", "currency", "scale", "authorization_source"}
+    if (not isinstance(spec, dict) or set(spec) != keys or type(spec["schema_version"]) is not int
+            or spec["schema_version"] != 1 or not isinstance(spec["database"], str)
+            or not Path(spec["database"]).is_absolute()
+            or not isinstance(spec["scope"], str) or not spec["scope"]
+            or spec["scope"] != spec["scope"].strip()
+            or type(spec["cap"]) is not int or spec["cap"] <= 0
+            or not isinstance(spec["authorization_source"], str) or not spec["authorization_source"].strip()
+            or spec["authorization_source"] != spec["authorization_source"].strip()
+            or spec["currency"] not in ("USD", "REQ", "SYN")
+            or type(spec["scale"]) is not int
+            or spec["scale"] != (1_000_000 if spec["currency"] == "USD" else 1)):
+        raise BenchmarkError("aggregate specification must use exact fields, absolute database and declared units")
+    if not create and not Path(spec["database"]).exists():
+        raise BenchmarkError("aggregate database does not exist")
+    # Observing aggregate usage must remain available while a runner owns the
+    # database. Ledger reads verify balances inside their SQLite transaction.
+    with (_runner_lock(spec["database"]) if create or amendment_path is not None else nullcontext()):
+        ledger = BudgetLedger(spec["database"])
+        if create:
+            ledger.create_aggregate(spec["scope"], spec["cap"], spec["currency"], spec["scale"],
+                                    f"{spec['authorization_source']}; specification:{digest(raw)}")
+        ledger.verify_aggregate(spec["scope"])
+        balance = ledger.aggregate_balances(spec["scope"])
+        if balance["authorization_source"] != f"{spec['authorization_source']}; specification:{digest(raw)}":
+            raise BenchmarkError("aggregate specification does not match frozen authority")
+        if balance["currency"] != spec["currency"] or balance["scale"] != spec["scale"]:
+            raise BenchmarkError("aggregate specification units do not match saved authority")
+        if amendment_path is not None:
+            amendment, _ = _load_json(amendment_path)
+            required = {"schema_version", "aggregate_spec_sha256", "scope", "amendment_id",
+                        "expected_cap", "new_cap", "authorization_source"}
+            if (not isinstance(amendment, dict) or set(amendment) != required
+                    or type(amendment["schema_version"]) is not int or amendment["schema_version"] != 1
+                    or amendment["aggregate_spec_sha256"] != digest(raw) or amendment["scope"] != spec["scope"]):
+                raise BenchmarkError("aggregate amendment does not match frozen specification")
+            if balance["frozen"] or balance.get("admission_block"):
+                raise BenchmarkError("blocked aggregate cannot be resumed by increasing its budget")
+            ledger.increase_cap(spec["scope"], amendment["amendment_id"], amendment["expected_cap"],
+                                amendment["new_cap"], amendment["authorization_source"])
+            balance = ledger.aggregate_balances(spec["scope"])
+        return {"dispatch_count": 0, "aggregate_spec_sha256": digest(raw), "budget": balance,
+                "scope": "explicit local allocation authority; does not authorize provider inference"}

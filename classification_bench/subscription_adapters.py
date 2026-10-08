@@ -252,11 +252,23 @@ class SubscriptionAdapter:
                                f"{self.kind}:request-capacity:1:unknown-subscription-cost",
                                f"{self.kind}:{self.model}:existing-account", request_id, ids)
 
-    def preflight(self, worker=None):
-        age = (datetime.now(timezone.utc) - self.extra_usage_verified_at).total_seconds()
+    def preflight(self, worker=None, *, account_assertion=None):
+        assertion = account_assertion if account_assertion is not None else {
+            "extra_usage_disabled": self.config["settings"]["extra_usage_disabled"],
+            "verified_at": self.config["settings"]["extra_usage_verified_at"],
+            "source": self.config["settings"]["extra_usage_source"]}
+        if not isinstance(assertion, dict) or assertion.get("extra_usage_disabled") is not True:
+            raise AdapterError("paid extra usage must be disabled before subscription execution")
+        _text(assertion.get("source"), "account assertion source")
+        checked = _timestamp(assertion.get("verified_at"))
+        age = (datetime.now(timezone.utc) - checked).total_seconds()
         if not 0 <= age <= 86400:
             raise AdapterError("extra usage disabled assertion must be verified within the last 24 hours")
         attestation = (worker or SubscriptionCLIWorker()).preflight(self)
+        attestation = {**attestation, "extra_usage_guard": {
+            "disabled": True, "verification": "operator_assertion", "source": assertion["source"],
+            "verified_at": assertion["verified_at"],
+            **{key: assertion[key] for key in ("revision", "assertion_id", "expires_at") if key in assertion}}}
         self._preflight = attestation
         return attestation
 
@@ -265,6 +277,9 @@ class SubscriptionAdapter:
             raise AdapterError("subscription prepared request required")
         if self._preflight is None:
             raise AdapterError("subscription preflight is required before dispatch")
+        checked = _timestamp(self._preflight["extra_usage_guard"]["verified_at"])
+        if not 0 <= (datetime.now(timezone.utc) - checked).total_seconds() <= 86400:
+            raise AdapterError("account assertion expired after preflight; dispatch refused")
         body = json.loads(prepared.body)
         if (body.get("model") != self.model or body.get("effort") != self.effort or
                 body.get("request_id") != prepared.request_id):

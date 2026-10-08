@@ -151,7 +151,7 @@ class ExecutionLedger:
             return dict(claimed)
 
     def admit(self, request_id, token, manifest_digest, input_digest, scope, reserve_amount,
-              *, bound_source=None, no_fee_evidence=None):
+              *, bound_source=None, no_fee_evidence=None, admission_guard=None):
         """Reserve and record the one dispatch intent in the same SQLite commit."""
         _text(request_id, "request_id")
         _text(token, "token")
@@ -170,6 +170,8 @@ class ExecutionLedger:
             if block is not None:
                 raise ExecutionError(f"admission blocked for scope {scope}: {block['reason']} "
                                      f"(evidence {block['evidence_id']})")
+            if admission_guard is not None:
+                admission_guard(conn)
             balance = self.budget._reserve_in(conn, scope, row["attempt_id"], reserve_amount,
                                               bound_source=bound_source, no_fee_evidence=no_fee_evidence)
             conn.execute("""UPDATE execution_requests SET state='admitted',admission_token=?,

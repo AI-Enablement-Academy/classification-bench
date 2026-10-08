@@ -24,10 +24,16 @@ def fixture():
                 "max_prompt_tokens": 100, "max_completion_tokens": 20,
                 "supported_parameters": ["max_completion_tokens", "temperature"],
                 "pricing": {"prompt": "0.000001", "completion": "0.000002", "request": "0", "image": "0"}}
+    snapshot["model_identity"] = fictional_identity()
     config = {"id": "c", "model": MODEL,
               "settings": {"adapter": "openrouter", "provider": PROVIDER,
                            "max_output_tokens": 10, "temperature": 0,
-                           "endpoint_snapshot": snapshot}}
+                           "endpoint_snapshot": snapshot,
+                           "account_policy_assertion": {
+                               "source": "synthetic offline account-policy fixture; no real account verified",
+                               "verified_at": "2026-09-28T11:00:00Z",
+                               "web_disabled_or_overridable": True,
+                               "response_healing_disabled_or_overridable": True}}}
     plan = {"task": {"fields": [{"name": "segment", "labels": ["yes", "no"]}]}}
     req = {"request_id": "request-1", "config_id": "c", "prompt_id": "p",
            "items": [{"id": "a", "input": {"text": "hello"}}]}
@@ -46,7 +52,16 @@ def completion(*, model=MODEL, content=None, cost=0.000021):
 
 
 def model_metadata(*, requested=MODEL, canonical=MODEL):
-    return json.dumps({"data": {"id": requested, "canonical_slug": canonical}}).encode()
+    return json.dumps({"data": {"id": requested, "canonical_slug": canonical,
+                               "reasoning": {"default_enabled": False, "mandatory": False}}}).encode()
+
+
+def fictional_identity(*, requested=MODEL, canonical=MODEL):
+    raw = model_metadata(requested=requested, canonical=canonical)
+    return {"requested_id": requested, "canonical_id": canonical,
+            "source_url": f"https://openrouter.ai/api/v1/model/{requested}",
+            "observed_at": "2026-09-28T11:00:00Z",
+            "response_sha256": hashlib.sha256(raw).hexdigest(), "response_json": raw.decode("utf-8")}
 
 
 def bound_config(*, canonical="example/model-v1-2026-01-01"):
@@ -65,6 +80,9 @@ class OpenRouterTests(unittest.TestCase):
     def adapter(self, config=None, **kwargs):
         if config is None:
             config = fixture()[0]
+        identity = config["settings"]["endpoint_snapshot"].get("model_identity")
+        if identity is not None:
+            kwargs.setdefault("model_fetch", lambda url: identity["response_json"].encode())
         return OpenRouterAdapter(config, now=lambda: NOW, **kwargs)
 
     def test_prepare_pins_route_price_and_output(self):
@@ -297,6 +315,7 @@ class OpenRouterTests(unittest.TestCase):
         snapshot["model_id"] = config["model"]
         snapshot["provider_tag"] = "openai"
         snapshot["source_url"] = "https://openrouter.ai/api/v1/models/openai/gpt-4.1-nano/endpoints"
+        snapshot["model_identity"] = fictional_identity(requested=config["model"], canonical=config["model"])
         config["settings"]["endpoint_snapshot"]["pricing"] = {
             "prompt": "0.0000001", "completion": "0.0000004",
             "request": "0", "input_cache_read": "0.000000025", "web_search": "0.01"}
@@ -305,7 +324,8 @@ class OpenRouterTests(unittest.TestCase):
         body = json.loads(prepared.body)
         self.assertEqual(prepared.reserve_microusd, 14)
         self.assertNotIn("tools", body)
-        self.assertNotIn("plugins", body)
+        self.assertEqual(body["plugins"], [{"id": "web", "enabled": False},
+                                           {"id": "response-healing", "enabled": False}])
         self.assertNotIn("web_search", body)
         config["settings"]["endpoint_snapshot"]["pricing"]["input_cache_read"] = "0.0000002"
         with self.assertRaisesRegex(AdapterError, "cache read"):
@@ -319,6 +339,7 @@ class OpenRouterTests(unittest.TestCase):
         snapshot["model_id"] = config["model"]
         snapshot["provider_tag"] = "perplexity"
         snapshot["source_url"] = "https://openrouter.ai/api/v1/models/perplexity/sonar/endpoints"
+        snapshot["model_identity"] = fictional_identity(requested=config["model"], canonical=config["model"])
         config["settings"]["endpoint_snapshot"]["pricing"]["web_search"] = "0.01"
         with self.assertRaisesRegex(AdapterError, "web search"):
             self.adapter(config)
@@ -366,6 +387,7 @@ class OpenRouterTests(unittest.TestCase):
         snapshot["model_id"] = config["model"]
         snapshot["provider_tag"] = "openai"
         snapshot["source_url"] = "https://openrouter.ai/api/v1/models/openai/gpt-4.1-nano/endpoints"
+        snapshot["model_identity"] = fictional_identity(requested=config["model"], canonical=config["model"])
         adapter = self.adapter(config)
         response = json.loads(completion(model="openai/gpt-4.1-nano"))
         response["provider"] = "OpenAI"

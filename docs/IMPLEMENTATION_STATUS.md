@@ -1,5 +1,21 @@
 # Implementation status: 2026-10-08
 
+## Aggregate accounting, account checks and OpenRouter controls
+
+[Aggregate accounting](AGGREGATE_BUDGET.md) now reserves whole smoke/full child caps in one authoritative database, preserves separate allocations/charges/reservations/unknown holds, and propagates committed overruns and execution safety blocks to siblings. Version-2 runner configurations retain logical provider IDs while using run-qualified SQLite identities, so overlapping smoke/full inputs do not collide. The aggregate CLI supports creation, status during an active run and exact-specification-bound cap amendments. Parent blocks and freezes remain visible before child allocation and do not consume pause/stop controls.
+
+[Subscription assertion renewal](SUBSCRIPTION_ASSERTIONS.md) appends dated operator evidence without changing frozen inputs, configuration or request identity. Preflight reads current verified history without creating state; admission checks the exact selected revision in the same transaction as reservation and dispatch intent. Claude Code/Codex require this account guard separately from generic REQ accounting. Renewal does not clear a safety block, stop control or unresolved hold and does not independently verify provider billing settings.
+
+[OpenRouter discovery and reasoning controls](OPENROUTER.md) retain public catalog/model/endpoint evidence, canonical controls, documented combined completion bounds and conservative supported tier/cache prices. An explicit fresh operator plugin-policy assertion is a separate prerequisite. It is conditional evidence, not independent account verification. Legacy completed results remain readable; missing model identity or an active/default reasoning configuration without a documented bound cannot authorize live preflight or direct dispatch. Captured omission of reasoning metadata follows the official non-reasoning contract; explicit null remains malformed.
+
+Independent aggregate/CLI, runtime/guard, parent-block/freeze and OpenRouter reviews returned **APPROVE** after the confirmed blockers were repaired. Reviews exercised actual CLI subprocesses, a runner-held lock, real-process ledger races, an offline runner overrun with saved receipts, revision races and frozen historical response evidence. No provider inference, credential copying, account-setting change or source-project mutation occurred. Public model reads and private read-only account observations are readiness evidence only.
+
+Final `python3 -m unittest discover -s tests -v`: **559 tests pass in 101.531 seconds, no skips**, exit 0 (`/tmp/classification-managed-verified.log`). The final independent OpenRouter subset passed 60 tests; the aggregate/models CLI and private-output subset passed 23. The historical compatibility fixture preserves captured original request/snapshot hashes without requiring Git history at test runtime. `git diff --check` passed.
+
+Two **RESIDUAL** limitations remain documented: a proven local guard expiry after durable intent uses the conservative unknown-outcome path and retains invocation capacity; pending historical raw recovery across changed implementation hashes requires the original verified parser build, preserving its evidence/reservation without replay. Neither permits extra dispatch or silently releases exposure.
+
+The expanded goal remains active. Automatic smoke/full selection, mixed-unit scheduling, shared provider concurrency, combined report composition and distinct model metadata still need implementation. Current-route live acceptance, clean-install independent operation and exact rendered report/presentation acceptance remain separate gates. The repository remains private; the Apache-2.0/MIT public-release milestone follows completion and the release audit.
+
 ## Repeat analysis and operator reproduction, 2026-10-08
 
 [Repeat analysis](REPEAT_ANALYSIS.md) now presents all-field/per-field flips, comparable and excluded denominators, original case reasons, whole-repeat agreement/validity ranges and exact A/B evidence. Historical/imported/replay/declared-fresh sources retain their scope and do not establish fresh dispatch. Report and presentation use the same source-bound findings. Optional `report --repeat-origins` declarations affect offline reporting only.

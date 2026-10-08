@@ -20,6 +20,8 @@ The [runtime tests](../tests/test_adapter_runtime.py) register another request/r
 
 Live runtimes default to `accounting_currency = "USD"`. Subscription runtimes declare `"REQ"`, with scale one and one reserved unit per fresh CLI invocation. This counts invocations, not opaque internal model calls or dollars. Parsed provider cost remains unknown. The scheduler settles consumed invocation capacity separately and preserves holds for ambiguous dispatch. Different accounting units currently require separate scopes. No run configuration can change a registered runtime's accounting unit.
 
+Claude Code and Codex runtimes separately declare `requires_account_assertion = True`. For these runtimes the runner passes the current [subscription assertion](SUBSCRIPTION_ASSERTIONS.md) as the `account_assertion` keyword to preflight, and verifies the same revision inside admission. Request-count accounting alone does not imply this provider-specific account contract: another trusted REQ runtime can enforce its own prerequisites through ordinary preflight. Experiments cannot change either runtime capability.
+
 ## Historical evidence and changed code
 
 Read-only export/report verifies the saved manifest and request against their enrolled hashes, immutable run/plan/control/schedule bindings and receipt evidence. It reports the stored route and source digests, so a runtime code edit does not relabel historical results. The original completed candidate and product demo archives remain readable after the runtime refactor.

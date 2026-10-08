@@ -73,7 +73,7 @@ class VerifiedExecution:
         return {"request": enrolled, "manifest_ref": manifest, "request_ref": request}
 
     def admit_verified(self, request_id, token, scope, reserve_amount, manifest_ref, request_ref,
-                       *, bound_source=None, no_fee_evidence=None):
+                       *, bound_source=None, no_fee_evidence=None, admission_guard=None):
         """Re-read both artifacts and match the enrolled byte digests before admission."""
         state = self.execution.get(request_id)
         entry = state["execution"]
@@ -87,7 +87,7 @@ class VerifiedExecution:
             raise VerifiedExecutionError("artifact bytes do not match enrolled digests")
         return self.execution.admit(request_id, token, manifest_ref.sha256, request_ref.sha256,
                                     scope, reserve_amount, bound_source=bound_source,
-                                    no_fee_evidence=no_fee_evidence)
+                                    no_fee_evidence=no_fee_evidence, admission_guard=admission_guard)
 
     def save_response(self, request_id, token, response_bytes, media_type, source_id):
         """Publish response bytes and a request-bound receipt, then index the receipt."""

@@ -250,6 +250,7 @@ class SubscriptionRuntime:
 
     offline = False
     accounting_currency = "REQ"
+    requires_account_assertion = True
 
     def __init__(self, kind):
         self.kind = kind
@@ -277,9 +278,9 @@ class SubscriptionRuntime:
                     (Path(module.__file__).read_bytes() for module in
                      (subscription_adapters, isolation))))}
 
-    def preflight(self, adapter, prepared, worker):
+    def preflight(self, adapter, prepared, worker, *, account_assertion=None):
         from .manifest import canonical_bytes
-        proof = adapter.preflight(worker=worker)
+        proof = adapter.preflight(worker=worker, account_assertion=account_assertion)
         return f"{prepared.bound_source}:preflight:{digest(canonical_bytes(proof))}"
 
     def dispatch(self, adapter, prepared, api_key, worker):
