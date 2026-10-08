@@ -28,11 +28,15 @@ def generate_workflow_report(snapshot, labels=None, *, allow_partial_references=
                                           allow_partial_references=allow_partial_references,
                                           scenarios=scenarios, cohort_declarations=cohort_declarations,
                                           repeat_origins=repeat_origins)
+        frozen_evaluator = manifest.get("evaluation_provenance")
+        evaluator_text = ("Frozen evaluator provenance SHA-256: " + frozen_evaluator["provenance_sha256"]
+                          if frozen_evaluator else "Legacy workflow: frozen evaluator unspecified. This report records its current evaluator separately.")
         provenance = ("<aside aria-label='Workflow provenance' style='padding:12px 24px;border-bottom:1px solid #dcded8;overflow-wrap:anywhere'>"
                       f"<strong>{escape(manifest['name'])} / {escape(name.capitalize())}</strong>"
                       "<details><summary>Workflow and phase identity</summary>"
                       f"<p>Workflow SHA-256: <code>{escape(manifest['workflow_sha256'])}</code></p>"
                       f"<p>Phase plan SHA-256: <code>{escape(manifest['phases'][name]['plan_sha256'])}</code></p>"
+                      f"<p>{escape(evaluator_text)}</p>"
                       "<p>Metrics and findings apply to this phase. Identical cases scheduled in another phase are separate work.</p>"
                       "</details></aside>")
         documents[name] = documents[name].replace("<body>", "<body>" + provenance, 1)

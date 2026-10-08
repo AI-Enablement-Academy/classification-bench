@@ -24,7 +24,64 @@ def evidence_url(run, case=None, compare=None):
     return "#case-explorer-heading?" + urlencode(values)
 
 
-def build_findings(analysis, *, comparative=None, repeats=None):
+def _class_findings(analysis, field_metrics):
+    """Enumerate declared classes and every tied weakest supported recall."""
+    if field_metrics["analysis_id"] != analysis["analysis_id"] or field_metrics["source_hashes"] != analysis["source_hashes"]:
+        raise ValueError("class findings must match analysis sources")
+    findings = []
+    for run in field_metrics["runs"].values():
+        for field in run["fields"]:
+            per_label = {label: {key: deepcopy(value[key]) for key in
+                         ("support", "predicted_positive", "tp", "fp", "fn", "precision", "recall", "f1")}
+                         for label, value in field["per_label"].items()}
+            supported = [(label, row["recall"]["value"]) for label, row in per_label.items()
+                         if row["support"] and row["recall"]["value"] is not None]
+            minimum = min((value for _, value in supported), default=None)
+            tied = [label for label, value in supported if value == minimum]
+            error_ids = {cid for row in field["per_label"].values() for key in ("fp_ids", "fn_ids") for cid in row[key]}
+            cases = [cid for cid in field["known_reference_ids"] if cid in error_ids]
+            descriptions, links = [], []
+            for label in field["labels"]:
+                row = field["per_label"][label]
+                values = []
+                for key in ("precision", "recall", "f1"):
+                    ratio = row[key]
+                    values.append(f"{key} {ratio['numerator']}/{ratio['denominator']}" if ratio["value"] is not None else
+                                  f"{key} unavailable")
+                support = str(row["support"]) if row["support"] is not None else "unavailable"
+                descriptions.append(f"{label}: support {support}; " + ", ".join(values))
+                if row["support_ids"]:
+                    links.append({"label": f"Inspect {field['name']} / {label}: {row['support']} referenced cases",
+                                  "run_a": run["run_id"], "case_id": row["support_ids"][0]})
+            text = (f"{field['known_reference_count']}/{field['planned']} planned cases have this field's reference; "
+                    f"{field['unknown_reference_count']} references are unavailable. " + "; ".join(descriptions) + ". "
+                    f"Known-reference outcomes include {field['known_reference_outcomes']['invalid']} invalid and "
+                    f"{field['known_reference_outcomes']['missing']} missing full predictions; both remain false negatives "
+                    "for their reference class. Undefined ratio denominators are unavailable. ")
+            if tied:
+                text += ("The lowest observed recall among classes with positive reference support is "
+                         f"{minimum:.1%}, tied across " + ", ".join(tied) + ". All tied classes are listed. ")
+            else:
+                text += "No supported class recall is available. "
+            text += ("These are descriptive counts with potentially small support; unobserved classes are not ranked. "
+                     "They establish no model-quality or deployment guarantee.")
+            item = {"kind": "class_metrics", "title": f"Class support and errors: {field['name']}",
+                    "observation": text, "scope": f"{run['config_id']} / {run['prompt_id']} / repeat {run['repeat']}; field {field['name']}",
+                    "denominator": field["planned"], "run_ids": [run["run_id"]], "case_ids": cases,
+                    "metrics": {"field": field["name"], "planned": field["planned"],
+                        "known_reference_count": field["known_reference_count"],
+                        "unknown_reference_count": field["unknown_reference_count"],
+                        "known_reference_outcomes": deepcopy(field["known_reference_outcomes"]),
+                        "per_label": per_label, "lowest_supported_recall": {"value": minimum, "labels": tied}},
+                    "source_hashes": deepcopy(analysis["source_hashes"]), "supporting_links": links,
+                    "interpretation": "Descriptive class evidence on this task and saved inputs; reference support is not population prevalence.",
+                    "next_step": "Inspect false positives, false negatives and reference coverage together. Preserve corrections as a new reference version; assess underrepresented classes separately."}
+            item["finding_id"] = _digest({"analysis": analysis["analysis_id"], **item})
+            findings.append(item)
+    return findings
+
+
+def build_findings(analysis, *, comparative=None, repeats=None, operations=None, field_metrics=None):
     """Return deterministic observations and explicitly conditional next steps."""
     findings = []
 
@@ -95,6 +152,11 @@ def build_findings(analysis, *, comparative=None, repeats=None):
             scope, cost["planned_requests"], [rid], [],
             "Reconcile provider receipts and unresolved exposure before making a cost recommendation.", dict(cost))
 
+    if field_metrics is None:
+        from .report_metrics import build_field_metrics
+        field_metrics = build_field_metrics(analysis)
+    findings.extend(_class_findings(analysis, field_metrics))
+
     for pair in analysis["prompt_comparisons"]:
         known, planned = pair["scored_reference_cases"], pair["planned"]
         gains, losses = len(pair["gained_ids"]), len(pair["lost_ids"])
@@ -150,6 +212,10 @@ def build_findings(analysis, *, comparative=None, repeats=None):
     if comparative["analysis_id"] != analysis["analysis_id"] or comparative["source_hashes"] != analysis["source_hashes"]:
         raise ValueError("comparative findings must match analysis sources")
     findings.extend(deepcopy(comparative["findings"]))
+    if operations is not None:
+        from .report_operations import build_operational_findings
+        operational = build_operational_findings(analysis, operations, comparative=comparative)
+        findings.extend(operational["findings"])
     from .report_repeats import build_repeat_analysis, build_repeat_findings
     if repeats is None:
         repeats = build_repeat_analysis(analysis)

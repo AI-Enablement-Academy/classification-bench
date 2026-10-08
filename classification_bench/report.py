@@ -844,6 +844,15 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
         filters.append(f"<label>{label} <select data-filter='{key}'{mirror}>{options}</select></label>")
     source_rows = [(name, digest if digest is not None else "unavailable (not supplied)")
                    for name, digest in result["source_hashes"].items()]
+    evaluator = result["evaluation_provenance"]
+    source_rows.extend([
+        ("Evaluation identity", result["evaluation_id"]),
+        ("Scoring algorithm", f"{evaluator['algorithm']} v{evaluator['algorithm_version']}"),
+        ("Evaluator provenance SHA-256", evaluator["provenance_sha256"]),
+        ("Evaluator implementation SHA-256", evaluator["implementation_sha256"]),
+        ("Case-analysis provenance SHA-256", analysis["analysis_provenance"]["provenance_sha256"]),
+        ("Implementation scope", "Scoring and case analysis source files; excludes findings/presentation and Python/dependency environment."),
+    ])
     if operations:
         source_rows.append(("supplied operations", _digest(operations)))
     categories = Counter(row["category"] for row in comparison_rows)
@@ -1099,7 +1108,8 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
     comparative_panel = render_comparative_findings(comparative_data)
     repeat_data = build_repeat_analysis(analysis, origin_declarations=repeat_origins)
     repeat_panel = render_repeat_analysis(repeat_data)
-    finding_data = build_findings(analysis, comparative=comparative_data, repeats=repeat_data)
+    finding_data = build_findings(analysis, comparative=comparative_data, repeats=repeat_data,
+                                 operations=operations, field_metrics=field_metrics)
     deep_findings = render_findings(finding_data)
     sensitivity_data = build_sensitivity(task, plan, predictions, labels, scenarios)
     sensitivity = render_sensitivity(sensitivity_data)

@@ -152,6 +152,13 @@ have `authorization_file: null`. Provider discovery, credential checks,
 preflight and inference occur through their separately authorized execution
 paths.
 
+New manifests use schema 2 and freeze the current scoring implementation in
+`evaluation_provenance`. The input specification remains schema 1. Historical
+schema-1 manifests have unspecified frozen evaluator provenance. Non-scoring
+status/export/recovery reads retain compatibility; new schema-2 workflow reports
+require the frozen evaluator to match the current build. See
+[evaluation provenance](EVALUATION_PROVENANCE.md) for version and identity rules.
+
 Both `prepare` and `load` return the manifest with absolute paths. Useful fields
 include:
 

@@ -464,4 +464,7 @@ def evaluate(task, plan, labels=None, predictions=None, *, allow_partial_referen
             "invalid": invalid, "conditions": results}
     if not complete:
         result["reference_coverage"] = coverage
+    from .evaluation_provenance import current_provenance, evaluation_identity
+    result["evaluation_provenance"] = current_provenance()
+    result["evaluation_id"] = evaluation_identity(result["source_hashes"], result["evaluation_provenance"])
     return result

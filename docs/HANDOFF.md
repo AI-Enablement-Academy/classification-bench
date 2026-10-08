@@ -1,5 +1,36 @@
 # Implementation handoff
 
+## Latest verified follow-up: 2026-10-08
+
+[Implementation status](IMPLEMENTATION_STATUS.md) now records 653 passing tests,
+fresh wheel/venv operator acceptance, frozen evaluator provenance, measured
+operational and per-class findings, and independent APPROVE reviews. The
+[one-request OpenRouter smoke](WORKFLOW_LIVE_ACCEPTANCE_20261008.md) succeeded for
+60 microUSD under the existing project authorization. Its exact accepted
+workflow differs from the retained unexecuted proposal. Preserve the initial
+metadata 404 and its separate successful read-only recheck; do not overwrite
+original telemetry or repeat the completed inference.
+
+Known project charges are 373 microUSD; prior holds remain 559,151 microUSD.
+Retained allocations are USD 3.80 of the existing USD 10 ceiling. No account
+setting changed. The Claude browser billing organization now matches native
+CLI authentication, but Usage credits are enabled. Codex credit fallback remains
+unverified. Do not create true account guards from these observations; follow
+[subscription readiness](SUBSCRIPTION_READINESS_20261008.md) for the exact gates.
+
+Current report fixtures and combined reports are under
+`private-data/report-release-20261008-v1/`. Their `verification.json` and
+`inspection.json` bind exact files and generator hashes; 107 script syntax and
+81 JSON checks passed. The updated [visual checklist](REPORT_UX_CHECK.md) still
+needs permitted rendered/operator acceptance. Source/DOM checks do not replace
+it, and the recorded browser restriction remains in force.
+
+Remaining work is required Claude Code/Codex live acceptance after truthful
+prerequisites, exact rendered acceptance, and the final reconciled goal audit.
+Native route statuses stay separate and honest. Keep this repository private;
+the user intends public release after completion and a release audit, with
+Apache-2.0 provisional and MIT an alternative.
+
 ## Active expansion: 2026-10-08
 
 The [frozen workflow](WORKFLOW.md) now prepares both phases from one specification and executes each selected phase through one shared scheduler. Per-unit aggregate caps, provider limits, exact phase authorization, pause/stop states and retained evidence remain separate and explicit. Combined reports join all routes within each phase and retain independent smoke/full scores. [Model declarations](MODEL_METADATA.md) expose family, purpose and sourced lineage without inferring them from model names. See [implementation status](IMPLEMENTATION_STATUS.md) for the current verification record.

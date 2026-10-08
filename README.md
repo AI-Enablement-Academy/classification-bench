@@ -8,6 +8,13 @@ The expanded release is in progress: [task import](docs/TASK_SETUP.md), [subscri
 
 Start with the [smoke/full operator workflow](docs/WORKFLOW.md), [individual runner](docs/RUNNER.md), [task and result formats](docs/FORMATS.md), and [implementation status and remaining verification gates](docs/IMPLEMENTATION_STATUS.md). Synthetic examples test the software, not model quality or nondeterminism.
 
+New evaluations retain [scoring implementation provenance](docs/EVALUATION_PROVENANCE.md).
+Shared findings include measured operational comparisons and per-class errors,
+with explicit coverage and compatibility limits. The [current OpenRouter workflow
+smoke](docs/WORKFLOW_LIVE_ACCEPTANCE_20261008.md) passed; account-backed Claude
+Code/Codex and exact rendered acceptance remain open. Use the [current report
+checklist](docs/REPORT_UX_CHECK.md) for reproducible all-state fixtures.
+
 For a new implementation task, start with the [handoff](docs/HANDOFF.md), [goal description](docs/NEXT_TASK_GOAL.md) and [benchmark lessons](docs/BENCHMARK_LESSONS.md).
 
 ## Why a separate project

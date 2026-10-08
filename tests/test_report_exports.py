@@ -7,7 +7,8 @@ import shutil
 import subprocess
 import unittest
 
-from classification_bench.core import ValidationError, build_plan
+from classification_bench.core import ValidationError, _digest, build_plan, evaluate
+from classification_bench.evaluation_provenance import current_provenance, evaluation_identity
 from classification_bench.report_analysis import build_analysis
 from classification_bench.report_exports import build_report_exports, render_downloads
 from classification_bench.report_findings import build_findings
@@ -36,6 +37,89 @@ def fixture(context=False):
 
 
 class ReportExportTests(unittest.TestCase):
+    def test_versioned_exports_bind_the_four_inputs_and_exact_scoring_records(self):
+        analysis, task, plan, predictions, labels = fixture(context=True)
+        before = copy.deepcopy(analysis)
+        scored = evaluate(task, plan, labels, predictions, allow_partial_references=True)
+        exports = build_report_exports(analysis)
+        for mode in ("sanitized", "private"):
+            value = json.loads(exports[mode]["payload"])
+            record = value["evaluation"]
+            self.assertEqual(record["status"], "versioned")
+            self.assertEqual(record["evaluation_id"], scored["evaluation_id"])
+            self.assertEqual(record["evaluation_provenance"], scored["evaluation_provenance"])
+            self.assertEqual(record["analysis_provenance"], analysis["analysis_provenance"])
+            sources = {name: value["source_hashes"][name] for name in ("task", "plan", "labels", "predictions")}
+            self.assertEqual(record["evaluation_id"], evaluation_identity(sources, record["evaluation_provenance"]))
+            self.assertNotIn("CANARY", json.dumps(record))
+            self.assertEqual(set(record), {"status", "evaluation_id", "evaluation_provenance", "analysis_provenance"})
+        self.assertEqual(analysis, before)
+
+    def test_provenance_export_rejects_changed_logical_sources_and_evaluation_identity(self):
+        original = fixture()
+        for source in ("task", "plan", "labels", "predictions"):
+            with self.subTest(source=source):
+                changed = copy.deepcopy(original)
+                changed["source_hashes"][source] = "a" * 64
+                with self.assertRaisesRegex(ValidationError, "evaluation identity mismatch"):
+                    build_report_exports(changed)
+        changed = copy.deepcopy(original)
+        changed["evaluation_id"] = "a" * 64
+        with self.assertRaisesRegex(ValidationError, "evaluation identity mismatch"):
+            build_report_exports(changed)
+
+    def test_provenance_allowlist_rejects_partial_records_private_fields_and_wrong_scopes(self):
+        original = fixture()
+        for missing in ("evaluation_id", "evaluation_provenance", "analysis_provenance"):
+            with self.subTest(missing=missing):
+                changed = copy.deepcopy(original)
+                changed.pop(missing)
+                with self.assertRaisesRegex(ValidationError, "incomplete evaluation provenance"):
+                    build_report_exports(changed)
+        for record in ("evaluation_provenance", "analysis_provenance"):
+            with self.subTest(record=record):
+                changed = copy.deepcopy(original)
+                changed[record]["private_note"] = "PROVENANCE_SECRET_CANARY"
+                with self.assertRaisesRegex(ValidationError, "invalid evaluation provenance"):
+                    build_report_exports(changed)
+                changed = copy.deepcopy(original)
+                changed[record]["source_sha256"]["/private/account.json"] = "a" * 64
+                with self.assertRaisesRegex(ValidationError, "invalid evaluation provenance"):
+                    build_report_exports(changed)
+        changed = copy.deepcopy(original)
+        changed["analysis_provenance"] = copy.deepcopy(changed["evaluation_provenance"])
+        with self.assertRaisesRegex(ValidationError, "invalid evaluation provenance"):
+            build_report_exports(changed)
+        changed = copy.deepcopy(original)
+        changed["evaluation_provenance"]["source_sha256"]["classification_bench/core.py"] = "PROVENANCE_SECRET_CANARY"
+        with self.assertRaisesRegex(ValidationError, "invalid evaluation provenance"):
+            build_report_exports(changed)
+
+    def test_historical_provenance_is_preserved_and_legacy_analysis_is_not_relabelled(self):
+        historical = fixture()
+        provenance = historical["evaluation_provenance"]
+        provenance["source_sha256"]["classification_bench/core.py"] = "a" * 64
+        provenance["implementation_sha256"] = _digest(provenance["source_sha256"])
+        provenance["provenance_sha256"] = _digest({key: value for key, value in provenance.items()
+                                                  if key != "provenance_sha256"})
+        self.assertNotEqual(provenance, current_provenance())
+        sources = {name: historical["source_hashes"][name] for name in ("task", "plan", "labels", "predictions")}
+        historical["evaluation_id"] = evaluation_identity(sources, provenance)
+        historical["analysis_id"] = _digest({"version": 1, "source_hashes": historical["source_hashes"],
+            "evaluation_provenance_sha256": provenance["provenance_sha256"],
+            "analysis_provenance_sha256": historical["analysis_provenance"]["provenance_sha256"]})
+        for item in build_report_exports(historical).values():
+            record = json.loads(item["payload"])["evaluation"]
+            self.assertEqual(record["evaluation_provenance"], provenance)
+            self.assertEqual(record["evaluation_id"], historical["evaluation_id"])
+        legacy = fixture()
+        for key in ("evaluation_id", "evaluation_provenance", "analysis_provenance"):
+            legacy.pop(key)
+        before = copy.deepcopy(legacy)
+        for item in build_report_exports(legacy).values():
+            self.assertEqual(json.loads(item["payload"])["evaluation"], {"status": "unversioned_legacy_analysis"})
+        self.assertEqual(legacy, before)
+
     def test_sanitized_projection_omits_identity_text_taxonomy_and_raw_data(self):
         analysis = fixture()
         exports = build_report_exports(analysis, findings=build_findings(analysis))

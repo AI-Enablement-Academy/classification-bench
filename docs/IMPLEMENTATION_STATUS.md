@@ -1,5 +1,52 @@
 # Implementation status: 2026-10-08
 
+## Evaluation provenance, deeper findings and current OpenRouter acceptance
+
+New [evaluations](EVALUATION_PROVENANCE.md) bind scoring algorithm/source identity
+to their inputs. New schema-2 workflows freeze that evaluator; historical reads
+remain available, while scoring with a changed frozen evaluator fails explicitly.
+Reports and allowlisted downloads disclose current and frozen provenance.
+
+Shared findings now include per-class support, precision/recall/F1, all tied
+lowest supported recall classes, and compatible quality/cost/token/timing
+comparisons. Partial coverage, unknown charges, unresolved holds, synthetic
+measurements, tokenizer differences and provider attribution constrain which
+comparisons appear. Missing/invalid predictions retain their denominators.
+Independent provenance, export, fixture and operational reviews returned
+**APPROVE**, with no remaining confirmed BLOCKING or RESIDUAL findings in those
+scopes. Two imported provider-attribution residuals were repaired and retested.
+
+Final `python3 -m unittest discover -s tests -v`: **653 tests pass in 85.974
+seconds, no skips**, exit 0 (`/tmp/classification-release-final-20261008.log`).
+A newly built wheel installed in a fresh isolated virtual environment passed
+28 managed-workflow CLI commands across both fictional examples, then all 11
+Python invocations in the CSV setup/import/evaluation guide. All 40 installed
+package source hashes matched the checkout. This verifies the recorded host
+and existing build prerequisites, not every platform.
+
+The [current OpenRouter workflow smoke](WORKFLOW_LIVE_ACCEPTANCE_20261008.md)
+completed one valid response for 60 microUSD, within the existing USD 10 project
+authority. Recovery made zero dispatches. A separate read-only metadata recheck
+confirmed the canonical model/provider after an initial saved 404; original
+telemetry remains unchanged. Project known charges are 373 microUSD, old holds
+remain 559,151 microUSD, and retained allocations total USD 3.80.
+
+Ten exact private reports under `private-data/report-release-20261008-v1/`
+passed 107 JavaScript syntax and 81 JSON parsing checks. `verification.json`
+binds all-state fictional fixtures; `inspection.json` also binds both example
+workflow reports and the current live workflow report.
+`installed-operator-verification.json` retains the fresh installation evidence.
+These are offline/source checks, not rendered acceptance. Follow the updated
+[operator checklist](REPORT_UX_CHECK.md).
+
+**The goal remains incomplete.** [Claude Code/Codex readiness](SUBSCRIPTION_READINESS_20261008.md)
+still lacks the required paid-fallback conditions for live acceptance. Exact
+rendered visual, keyboard, responsive and interaction acceptance remains open
+under the recorded tool-policy boundary. Other native providers retain their
+separate statuses. The [requirement audit](GOAL_AUDIT_20261008.md) distinguishes
+these acceptance gates from the implementation gaps resolved by this increment.
+Public release remains after completion, final license choice and release audit.
+
 ## Frozen smoke/full workflow and model declarations
 
 [One workflow specification](WORKFLOW.md) now freezes source inputs, smoke/full selections and repeats, separate USD/REQ/SYN aggregate and phase caps, exhaustion policy and shared provider/concurrency controls. Preparation creates no execution database, credentials or live authorization. Selected-phase execution verifies separate exact approval before deriving child authorization records; the shared scheduler preserves independent accounting, account guards, blocked causes and ambiguous holds.

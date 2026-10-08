@@ -14,6 +14,7 @@ import json
 
 from .core import ValidationError, _digest
 from .model_metadata import export_model_metadata
+from .evaluation_provenance import EvaluationProvenanceError, evaluation_identity, validate_provenance
 
 
 _COUNTS = ("planned", "valid", "invalid", "missing", "full_reference", "partial_reference",
@@ -56,6 +57,22 @@ not automatic publication. Private is also allowlisted; opaque provider payloads
 and operation strings are not copied even when their parent object is supplied.
 """
     sources = {name: _hash(analysis["source_hashes"].get(name)) for name in _SOURCE_KEYS}
+    version_fields = ("evaluation_id", "evaluation_provenance", "analysis_provenance")
+    if any(name in analysis for name in version_fields):
+        if not all(name in analysis for name in version_fields):
+            raise ValidationError("report export: incomplete evaluation provenance")
+        try:
+            evaluator = validate_provenance(analysis["evaluation_provenance"], scope="categorical_evaluation")
+            analyzer = validate_provenance(analysis["analysis_provenance"], scope="categorical_case_analysis")
+            expected_id = evaluation_identity({name: sources[name] for name in ("task", "plan", "labels", "predictions")}, evaluator)
+        except EvaluationProvenanceError as exc:
+            raise ValidationError("report export: invalid evaluation provenance") from exc
+        if analysis["evaluation_id"] != expected_id:
+            raise ValidationError("report export: evaluation identity mismatch")
+        evaluation = {"status": "versioned", "evaluation_id": expected_id,
+                      "evaluation_provenance": evaluator, "analysis_provenance": analyzer}
+    else:
+        evaluation = {"status": "unversioned_legacy_analysis"}
     fields = analysis["task"]["fields"]
     case_hashes = {cid: _digest({"task": sources["task"], "case_id": cid}) for cid in analysis["case_ids"]}
     for projection in (findings, field_metrics):
@@ -177,6 +194,7 @@ and operation strings are not copied even when their parent object is supplied.
                         "baseline_fields": [field_stats(run["baseline_fields"][field["name"]], index) for index, field in enumerate(fields)]})
                 scenarios["scenarios"].append(item)
         return {"schema_version": 1, "analysis_id": _hash(analysis["analysis_id"]), "source_hashes": sources,
+                "evaluation": deepcopy(evaluation),
                 "field_metrics_id": _hash(field_metrics["metrics_id"]) if field_metrics is not None else None,
                 "visibility": "private" if private else "sanitized",
                 "privacy_note": ("Includes input text and reference labels; keep private." if private else

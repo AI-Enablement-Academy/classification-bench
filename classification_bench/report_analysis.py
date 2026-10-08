@@ -11,6 +11,7 @@ from .model_metadata import project_model_metadata
 from itertools import combinations
 
 from .core import ValidationError, _digest, validated_positions, validate_reference_labels
+from .evaluation_provenance import current_provenance, evaluation_identity
 
 
 AGREEMENT_RULE = "two_valid_full_vectors_equal"
@@ -375,7 +376,15 @@ def build_analysis(task, plan, predictions, labels=None, operations=None, *, coh
                 "source_hashes": {"run_a": a["source_hashes"], "run_b": b["source_hashes"]}})
     pairs = [_agreement_pair(a, b) for a, b in combinations(runs, 2) if _compatibility(a, b)["compatible"]]
     cohorts = _cohorts(runs, pairs, cohort_declarations, task["fields"])
-    analysis = {"schema_version": 1, "analysis_id": _digest({"version": 1, "source_hashes": sources}),
+    evaluation_provenance = current_provenance()
+    analysis_provenance = current_provenance(scope="categorical_case_analysis")
+    evaluation_id = evaluation_identity({key: sources[key] for key in ("task", "plan", "labels", "predictions")},
+                                        evaluation_provenance)
+    analysis = {"schema_version": 1, "analysis_id": _digest({"version": 1, "source_hashes": sources,
+                "evaluation_provenance_sha256": evaluation_provenance["provenance_sha256"],
+                "analysis_provenance_sha256": analysis_provenance["provenance_sha256"]}),
+            "evaluation_id": evaluation_id, "evaluation_provenance": evaluation_provenance,
+            "analysis_provenance": analysis_provenance,
             "source_hashes": sources, "task": deepcopy(task), "case_ids": list(case_ids),
             "positions": len(positions["positions"]), "runs": runs, "prompt_comparisons": prompt_comparisons,
             "agreement_pairs": pairs, "cohorts": cohorts, "agreement_rule": AGREEMENT_RULE,

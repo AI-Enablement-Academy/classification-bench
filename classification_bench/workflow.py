@@ -14,6 +14,7 @@ import stat
 from . import benchmark
 from .core import ValidationError, build_plan, validate_experiment, validate_inputs, validate_task
 from .manifest import canonical_bytes, digest
+from .evaluation_provenance import current_provenance, validate_provenance, EvaluationProvenanceError
 
 
 class WorkflowError(ValidationError):
@@ -172,7 +173,7 @@ def _run_hash(config, config_raw, task_raw, experiment_raw, inputs_raw):
                                    "inputs_sha256": digest(inputs_raw)}))
 
 
-def _build(spec_raw, source_raw, original_paths, root):
+def _build(spec_raw, source_raw, original_paths, root, *, manifest_version=1, evaluation_provenance=None):
     """Reconstruct every immutable file and binding entirely from frozen bytes."""
     spec = _json(spec_raw, "workflow specification")
     _validate_spec(spec)
@@ -266,12 +267,14 @@ def _build(spec_raw, source_raw, original_paths, root):
                               "request_count": len(phase_plan["requests"]),
                               "position_count": sum(len(request["items"]) for request in phase_plan["requests"]),
                               "runs": runs}
-    manifest = {"schema_version": 1, "kind": "classification_workflow", "name": spec["name"],
+    manifest = {"schema_version": manifest_version, "kind": "classification_workflow", "name": spec["name"],
                 "database": database, "artifacts": artifacts, "sources": sources,
                 "max_concurrency": spec["max_concurrency"], "provider_limits": spec["provider_limits"],
                 "aggregates": aggregates, "phases": phases,
                 "files": [{"path": absolute(relative), "sha256": digest(raw)}
                           for relative, raw in sorted(files.items())]}
+    if manifest_version == 2:
+        manifest["evaluation_provenance"] = validate_provenance(evaluation_provenance, scope="categorical_evaluation")
     manifest["workflow_sha256"] = digest(canonical_bytes(manifest))
     return files, manifest
 
@@ -301,7 +304,8 @@ def prepare(spec_path, directory):
     if destination.is_symlink():
         raise WorkflowError("workflow destination: symbolic links are not accepted")
     root = destination.resolve()
-    files, manifest = _build(spec_raw, source_raw, originals, root)
+    files, manifest = _build(spec_raw, source_raw, originals, root, manifest_version=2,
+                             evaluation_provenance=current_provenance())
     root.mkdir(mode=0o700)
     for relative, raw in sorted(files.items()):
         target = root / relative
@@ -345,8 +349,10 @@ def _contained(root, value, *, must_exist=True, directory=False):
     return path
 
 
-def load(manifest_path):
+def load(manifest_path, *, require_current_evaluation=False):
     """Verify all frozen files, derived plans, grouping and bindings; never repair."""
+    if type(require_current_evaluation) is not bool:
+        raise WorkflowError("require_current_evaluation: expected boolean")
     path = Path(manifest_path).absolute()
     if path.is_symlink() or path.parent.is_symlink():
         raise WorkflowError("frozen workflow: symbolic links are not accepted")
@@ -362,9 +368,21 @@ def load(manifest_path):
     if not isinstance(identity, str) or identity != digest(canonical_bytes(
             {key: value for key, value in manifest.items() if key != "workflow_sha256"})):
         raise WorkflowError("workflow manifest: workflow identity mismatch")
-    _object(manifest, {"schema_version", "kind", "name", "workflow_sha256", "database", "artifacts",
-                       "sources", "max_concurrency", "provider_limits", "aggregates", "phases", "files"},
-            "workflow manifest")
+    version = manifest.get("schema_version")
+    if type(version) is not int or version not in (1, 2):
+        raise WorkflowError("workflow manifest: expected schema_version 1 or 2")
+    keys = {"schema_version", "kind", "name", "workflow_sha256", "database", "artifacts",
+            "sources", "max_concurrency", "provider_limits", "aggregates", "phases", "files"}
+    if version == 2:
+        keys.add("evaluation_provenance")
+    _object(manifest, keys, "workflow manifest")
+    evaluation_provenance = None
+    if version == 2:
+        try:
+            evaluation_provenance = validate_provenance(manifest["evaluation_provenance"],
+                scope="categorical_evaluation", require_current=require_current_evaluation)
+        except EvaluationProvenanceError as exc:
+            raise WorkflowError(str(exc)) from exc
     _object(manifest["sources"], {"specification", "task", "experiment", "inputs"}, "workflow sources")
     originals = {}
     for role, source in manifest["sources"].items():
@@ -395,7 +413,8 @@ def load(manifest_path):
             raise WorkflowError(f"workflow source {role}: invalid frozen path")
     spec_raw = contents["sources/specification.json"]
     source_raw = {role: contents[f"sources/{role}.json"] for role in ("task", "experiment", "inputs")}
-    files, expected = _build(spec_raw, source_raw, originals, root)
+    files, expected = _build(spec_raw, source_raw, originals, root, manifest_version=version,
+                             evaluation_provenance=evaluation_provenance)
     if files != contents or expected != manifest:
         raise WorkflowError("frozen workflow: source, derived files or manifest bindings do not match preparation")
     _contained(root, manifest["database"], must_exist=False)

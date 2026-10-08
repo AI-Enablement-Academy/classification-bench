@@ -38,7 +38,7 @@ Use a separate export for each selected attempt set. The evaluator does not sele
 
 ## Evaluation
 
-Complete references retain the existing `schema_version: 1` result, including its source hashes and field structure. Setting `allow_partial_references=True` with complete references produces the same result. The implementation and saved-result compatibility checks are in [core.py](../classification_bench/core.py) and [test_unlabeled_evaluation.py](../tests/test_unlabeled_evaluation.py).
+Complete references retain metric `schema_version: 1`, its four logical source hashes and metric field structure. New evaluations additionally include `evaluation_provenance` and `evaluation_id`; historical saved JSON remains untouched. See [versioned evaluation provenance](EVALUATION_PROVENANCE.md) for the implementation scope and frozen-workflow drift checks. Setting `allow_partial_references=True` with complete references produces the same new result. The implementation and historical metric-payload compatibility checks are in [core.py](../classification_bench/core.py) and [test_unlabeled_evaluation.py](../tests/test_unlabeled_evaluation.py).
 
 Top-level fields include `source_hashes`, `positions`, `missing`, `invalid`, and `conditions`. Each condition contains `passes`, exact-agreement `pass_score_mean` and `pass_score_range`, and `repeat_comparisons`.
 

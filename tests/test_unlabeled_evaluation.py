@@ -44,7 +44,7 @@ class OptionalReferenceEvaluationTests(unittest.TestCase):
     def run_eval(self, labels=None, **kwargs):
         return evaluate(self.task, self.plan, labels, self.predictions, **kwargs)
 
-    def test_complete_reference_results_keep_prechange_canonical_bytes(self):
+    def test_complete_reference_metric_payload_keeps_prechange_canonical_bytes(self):
         read = lambda name: json.loads((EXAMPLES / name).read_text(encoding="utf-8"))
         task = read("task.json")
         plan = build_plan(task, read("experiment.json"), read("inputs.json"))
@@ -54,12 +54,16 @@ class OptionalReferenceEvaluationTests(unittest.TestCase):
                                      "4a50acf9ef97ef2790139950974a9d45304e2f4d28a32183161d991e684b81a6")):
             with self.subTest(digest=digest):
                 result = evaluate(task, plan, read("labels.json"), predictions)
-                self.assertEqual(_digest(result), digest)
+                metrics = {key: value for key, value in result.items()
+                           if key not in ("evaluation_id", "evaluation_provenance")}
+                self.assertEqual(_digest(metrics), digest)
+                self.assertIn("evaluation_provenance", result)
+                self.assertIn("evaluation_id", result)
                 self.assertEqual(result["schema_version"], 1)
                 self.assertNotIn("reference_coverage", result)
                 opted_in = evaluate(task, plan, read("labels.json"), predictions,
                                     allow_partial_references=True)
-                self.assertEqual(_digest(opted_in), digest)
+                self.assertEqual(opted_in, result)
 
     def test_unlabeled_predictions_keep_full_denominator_and_have_no_accuracy(self):
         result = self.run_eval()

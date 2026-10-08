@@ -149,9 +149,9 @@ def recover(path, *, phase):
     return {**_result(manifest, {phase: {"runs": results}}), "dispatch_count": 0}
 
 
-def report_snapshot(path, *, phase=None):
+def report_snapshot(path, *, phase=None, require_current_evaluation=True):
     """Join exact unit-group coverage under one lock, before opening references."""
-    manifest = workflow.load(path)
+    manifest = workflow.load(path, require_current_evaluation=require_current_evaluation)
     phases = {}
     loaded = {}
     for name in _phases(manifest, phase):
@@ -200,5 +200,5 @@ def report_snapshot(path, *, phase=None):
 def export_predictions(path, *, phase):
     if phase not in ("smoke", "full"):
         raise workflow.WorkflowError("select --phase smoke or full for this workflow action")
-    snapshot = report_snapshot(path, phase=phase)
+    snapshot = report_snapshot(path, phase=phase, require_current_evaluation=False)
     return snapshot["phases"][phase]["predictions"]
