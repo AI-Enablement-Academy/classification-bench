@@ -33,6 +33,12 @@ including 36 embedded downloads and both workflow phases. Every served file
 matches the audited bytes. [Publication and inspection instructions](PUBLIC_PREVIEW.md)
 explain the exact fixtures and verification boundary.
 
+Implementation checkpoint `cc179da` was pushed and verified against the
+private remote with a clean worktree. [Delivery evidence](../private-data/credit-preview-20261008/delivery-verification.json)
+records the exact commit. [Shared memory verification](../private-data/credit-preview-20261008/memory-verification.json)
+confirms identical decision content in both canonical stores and fresh isolated
+retrieval of the global marker, new decision and ReasoningBank pattern 499.
+
 **The goal remains incomplete.** Native Claude Code/Codex live acceptance and
 exact rendered acceptance are pending. HTTP delivery, source checks and Node
 control tests do not establish visual, keyboard, print or native-download
