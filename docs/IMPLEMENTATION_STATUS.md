@@ -22,6 +22,11 @@ an unrelated working directory. All 40 installed package source hashes matched
 the revised checkout. [Private verification](../private-data/subscription-controls-20261008/verification.json)
 retains the final test log digest and installed-operator evidence.
 
+Implementation checkpoint `b5f798d` was pushed and verified against the private
+remote with a clean worktree. [Shared memory verification](../private-data/subscription-controls-20261008/memory-verification.json)
+confirms the new decision in both canonical stores and fresh retrieval of that
+decision, the global marker and ReasoningBank pattern 498.
+
 The [expanded release audit](RELEASE_ACCEPTANCE_AUDIT.md) now covers all nine
 goal sections. Claude/Codex live acceptance and exact rendered report acceptance
 remain pending. No provider inference or account change occurred in this follow-up.
