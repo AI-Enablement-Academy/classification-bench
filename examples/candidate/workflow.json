@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "name": "Fictional candidate feedback classification",
+  "task": "task.json",
+  "experiment": "experiment.json",
+  "inputs": "inputs.json",
+  "budgets": {"SYN": 110},
+  "phases": {
+    "smoke": {"selection": {"first": 1}, "repeats": 1, "caps": {"SYN": 10}, "on_budget_exhausted": "pause"},
+    "full": {"selection": {"all": true}, "caps": {"SYN": 100}, "on_budget_exhausted": "stop"}
+  },
+  "max_concurrency": 2,
+  "provider_limits": {"synthetic": 2},
+  "authorization_source": "Fictional offline example; no provider spending"
+}

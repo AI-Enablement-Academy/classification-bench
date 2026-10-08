@@ -3,6 +3,8 @@
 import hashlib
 import json
 from collections import Counter
+from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 
 
 class ValidationError(ValueError):
@@ -52,6 +54,67 @@ def validate_task(task):
     return task
 
 
+MODEL_METADATA_AXES = ("family", "declared_purpose", "training_lineage")
+
+
+def validate_metadata_source_url(value):
+    """Accept explicit HTTP(S) citations without userinfo or ambiguous URL bytes."""
+    if (not isinstance(value, str) or not value or len(value) > 2048 or
+            any(ord(char) <= 32 or ord(char) == 127 for char in value) or "\\" in value):
+        raise ValidationError("model metadata source: expected a bounded HTTP(S) URL")
+    try:
+        parsed = urlsplit(value)
+        valid = (parsed.scheme in ("http", "https") and parsed.hostname and
+                 parsed.username is None and parsed.password is None)
+        parsed.port  # Reject malformed port declarations.
+    except ValueError as exc:
+        raise ValidationError("model metadata source: invalid URL") from exc
+    if not valid:
+        raise ValidationError("model metadata source: expected HTTP(S) without userinfo")
+    return value
+
+
+def validate_model_metadata(metadata):
+    """Validate separate operator declarations without inferring model facts."""
+    _object(metadata, {"schema_version", *MODEL_METADATA_AXES}, {"schema_version"}, "model_metadata")
+    if type(metadata["schema_version"]) is not int or metadata["schema_version"] != 1:
+        raise ValidationError("model_metadata: expected schema_version 1")
+    for axis in MODEL_METADATA_AXES:
+        if axis not in metadata:
+            continue
+        claim = metadata[axis]
+        if isinstance(claim, dict) and claim.get("status") == "unknown":
+            _object(claim, {"status"}, {"status"}, f"model_metadata.{axis}")
+            continue
+        required = {"value", "status", "provenance", "source_urls"}
+        if isinstance(claim, dict) and claim.get("status") == "operator_verified":
+            required.add("reviewed_at")
+        _object(claim, required, required, f"model_metadata.{axis}")
+        if claim["status"] not in ("operator_declared", "operator_verified"):
+            raise ValidationError(f"model_metadata.{axis}: unsupported declaration status")
+        for key in ("value", "provenance"):
+            _id(claim[key], f"model_metadata.{axis}.{key}")
+            if len(claim[key]) > 4000:
+                raise ValidationError(f"model_metadata.{axis}.{key}: text exceeds 4000 characters")
+        urls = _list(claim["source_urls"], f"model_metadata.{axis}.source_urls", minimum=0)
+        if len(urls) > 20:
+            raise ValidationError("model metadata: at most 20 source URLs per declaration")
+        for url in urls:
+            validate_metadata_source_url(url)
+        _unique(urls, f"model_metadata.{axis}.source_urls")
+        if (axis == "training_lineage" or claim["status"] == "operator_verified") and not urls:
+            raise ValidationError(f"model_metadata.{axis}: source URL required for lineage/verified claims")
+        if claim["status"] == "operator_verified":
+            value = claim["reviewed_at"]
+            try:
+                reviewed = datetime.fromisoformat(value[:-1] + "+00:00") if isinstance(value, str) and value.endswith("Z") else None
+            except ValueError as exc:
+                raise ValidationError("model metadata reviewed_at: invalid UTC timestamp") from exc
+            if reviewed is None or reviewed.tzinfo is None or reviewed.utcoffset() != timedelta(0):
+                raise ValidationError("model metadata reviewed_at: expected an aware UTC timestamp")
+    return metadata
+
+
 def validate_experiment(experiment):
     _object(experiment, {"configs", "prompts", "repeats", "batch_size"},
             {"configs", "prompts", "repeats", "batch_size"}, "experiment")
@@ -61,12 +124,14 @@ def validate_experiment(experiment):
     configs = _list(experiment["configs"], "experiment.configs")
     prompts = _list(experiment["prompts"], "experiment.prompts")
     for config in configs:
-        _object(config, {"id", "model", "model_type", "settings"}, {"id", "model"}, "config")
+        _object(config, {"id", "model", "model_type", "model_metadata", "settings"}, {"id", "model"}, "config")
         _id(config["id"], "config.id")
         _id(config["model"], "config.model")
         if "model_type" in config and config["model_type"] not in (
                 "llm", "fine_tuned_llm", "decision"):
             raise ValidationError("config.model_type: expected llm, fine_tuned_llm or decision")
+        if "model_metadata" in config:
+            validate_model_metadata(config["model_metadata"])
         if "settings" in config and not isinstance(config["settings"], dict):
             raise ValidationError("config.settings: expected object")
         _digest(config)  # reject non-JSON values and NaN

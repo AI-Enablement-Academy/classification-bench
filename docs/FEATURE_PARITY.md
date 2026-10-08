@@ -4,6 +4,8 @@ The expanded release goal is not complete at the inspected baseline. The generic
 
 This matrix is a baseline inventory, not permission to run models or publish data. It accounts for the activated goal dated 8 October 2026, including features that the older [release audit](RELEASE_ACCEPTANCE_AUDIT.md) did not require. A pending requested feature is not silently deferred to an extension backlog.
 
+Current implementation checkpoints are tracked in [implementation status](IMPLEMENTATION_STATUS.md). The [smoke/full workflow](WORKFLOW.md) and [explicit model declarations](MODEL_METADATA.md) address execution and metadata gaps recorded in this original baseline; offline evidence does not replace the remaining live and rendered gates.
+
 ## Inspection and evidence boundaries
 
 | Item | Pinned evidence |

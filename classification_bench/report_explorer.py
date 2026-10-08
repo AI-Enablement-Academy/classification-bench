@@ -9,7 +9,7 @@ import json
 
 def _panel_data(analysis):
     """Keep all selectable evidence while avoiding unused pair metadata copies."""
-    run_keys = ("run_id", "config_id", "prompt_id", "repeat", "model", "case_ids",
+    run_keys = ("run_id", "config_id", "prompt_id", "repeat", "model", "model_type", "case_ids",
                 "counts", "cases", "source_hashes")
     transitions = ("gained_ids", "lost_ids", "stable_correct_ids", "stable_error_ids",
                    "reference_unknown_ids", "unusable_to_valid_ids", "valid_to_unusable_ids",
@@ -35,10 +35,19 @@ def _panel_data(analysis):
         has_usd_evidence = has_usd_evidence or any(pair.get("cost", {}).get(key) is not None
             for key in ("observed_cost_micro_usd", "partial_observed_cost_micro_usd", "unresolved_hold_micro_usd"))
         agreements.append(item)
+    runs, declarations = [], {}
+    for run in analysis.get("runs", []):
+        item = take(run, run_keys)
+        if "model_metadata" in run:
+            metadata = run["model_metadata"]
+            identity = metadata["metadata_sha256"]
+            declarations[identity] = metadata
+            item["model_metadata_sha256"] = identity
+        runs.append(item)
     return {"schema_version": 1, "analysis_id": analysis.get("analysis_id"),
             "source_hashes": analysis.get("source_hashes"), "task": {"fields": analysis["task"]["fields"]},
             "usd_micro_unit": "micro USD" if has_usd_evidence else None,
-            "runs": [take(run, run_keys) for run in analysis.get("runs", [])],
+            "runs": runs, **({"model_metadata": declarations} if declarations else {}),
             "prompt_comparisons": prompts,
             "agreement_pairs": agreements}
 
@@ -89,6 +98,7 @@ _HTML = """
 .explorer-evidence>div{min-width:0}.case-explorer pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:24rem;overflow:auto;padding:1rem;border:1px solid var(--line,#dcded8);background:#f1f2ed;font-size:.78rem}
 .explorer-transitions{margin-top:2rem}.explorer-transitions h3{margin-bottom:.7rem}.explorer-id-list{display:flex;flex-wrap:wrap;gap:.3rem .75rem;margin:.35rem 0;font-size:.8rem}
 .explorer-id-list>span{color:var(--muted,#59635d)}.explorer-evidence summary{cursor:pointer;color:var(--accent,#245b4b);font-weight:650}.explorer-note{font-size:.82rem}
+.case-explorer .model-declarations dt{font-weight:650;margin-top:.7rem}.case-explorer .model-declarations dd{margin:.25rem 0 .7rem;overflow-wrap:anywhere}.case-explorer .model-declarations p{font-size:.82rem}.case-explorer .model-declarations a{overflow-wrap:anywhere}
 @media(max-width:760px){.explorer-controls{grid-template-columns:1fr}.explorer-evidence{grid-template-columns:1fr}.explorer-table{min-width:570px}}
 @media(prefers-reduced-motion:reduce){.case-explorer *{transition:none!important;animation:none!important;scroll-behavior:auto}}
 </style>
@@ -107,6 +117,7 @@ _HTML = """
   <p id='explorer-empty' class='explorer-notice' hidden>No planned runs are available for this report.</p>
   <div id='explorer-content'>
     <p id='explorer-counts' class='explorer-note'></p>
+    <div id='explorer-model-declarations' aria-label='Selected run model declarations'></div>
     <div class='explorer-case-search explorer-actions'><label for='explorer-case-search'>Search case ID or input text<input id='explorer-case-search' type='search' autocomplete='off' aria-describedby='explorer-case-search-help explorer-case-search-count'></label><button id='explorer-case-search-reset' type='button'>Clear case search</button></div>
     <p id='explorer-case-search-help' class='explorer-note'>Search case IDs and structured input keys or values. Predictions and references are excluded. The case chooser retains every planned case.</p>
     <p id='explorer-case-search-count' class='explorer-note' role='status' aria-live='polite' aria-atomic='true'></p>
@@ -392,6 +403,36 @@ _SCRIPT = r"""
       verification: 'Supplied source metadata; not independently verified by the panel.'}, null, 2)));
     return details;
   }
+  function renderModelDeclarations(run, title) {
+    const detail = element('details'); detail.className = 'model-declarations'; detail.append(element('summary', title + ': model declarations'));
+    const metadata = (data.model_metadata || {})[run.model_metadata_sha256] || {}, list = element('dl');
+    const axes = {family:'Model family', declared_purpose:'Declared purpose', training_lineage:'Training lineage'};
+    const statuses = {operator_declared:'Operator declaration', operator_verified:'Operator verified declaration'};
+    Object.entries(axes).forEach(([axis, name]) => {
+      list.append(element('dt', name)); const description = element('dd'), claim = metadata[axis] || {status:'unknown'};
+      if (!statuses[claim.status] || typeof claim.value !== 'string') {
+        description.append(element('p', 'Unknown; no sourced declaration supplied.'));
+      } else {
+        description.append(element('p', claim.value + ' (' + statuses[claim.status] + ')'), element('p', 'Provenance: ' + claim.provenance));
+        if (claim.reviewed_at) description.append(element('p', 'Operator review: ' + claim.reviewed_at));
+        const sources = element('ul');
+        (claim.source_urls || []).forEach(value => {
+          try {
+            if (typeof value !== 'string' || /[\\\u0000-\u0020\u007f]/.test(value)) return;
+            const url = new URL(value);
+            if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) return;
+            const row = element('li'), source = element('a', value); source.href = value;
+            source.rel = 'noopener noreferrer'; row.append(source); sources.append(row);
+          } catch (_) { /* Unrecognized source URLs remain non-executable. */ }
+        }); description.append(sources);
+      }
+      list.append(description);
+    }); detail.append(list);
+    detail.append(element('p', metadata.metadata_sha256 ? 'Metadata SHA-256: ' + metadata.metadata_sha256 : 'Model metadata was not supplied.'));
+    detail.append(element('p', 'Operator-supplied declarations; the harness has not independently verified their sources or claims.'));
+    detail.append(element('p', 'Declared reporting group: ' + (run.model_type || 'Unspecified') + '. Execution route and output interface remain separate. These declarations do not establish causes of observed performance.'));
+    return detail;
+  }
   function render() {
     const a = byRun.get(state.run), b = byRun.get(state.compareRun);
     runSelect.value = state.run; compareSelect.value = state.compareRun;
@@ -407,6 +448,8 @@ _SCRIPT = r"""
     get('explorer-permalink').href = selectionURL(state).href;
     if (!a) {caseSearchTokens = new Map(); applyCaseSearch(); return;}
     get('explorer-counts').textContent = countText(a, 'Run A') + (b ? '\n' + countText(b, 'Run B') : '');
+    const declarations = get('explorer-model-declarations'); declarations.replaceChildren(renderModelDeclarations(a, 'Run A'));
+    if (b) declarations.append(renderModelDeclarations(b, 'Run B'));
     const aCases = casesOf(a), bCases = casesOf(b), body = get('explorer-case-table').querySelector('tbody'); body.replaceChildren();
     caseSearchTokens = new Map();
     caseIDs(a, b).forEach(id => {

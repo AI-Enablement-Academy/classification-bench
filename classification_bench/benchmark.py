@@ -165,9 +165,10 @@ def _runtime(config, supplied=None):
 
 def _adapter_config(config):
     """Pass execution controls to strict adapters; reporting metadata stays in the plan."""
-    if "model_type" not in config:
+    metadata = {"model_type", "model_metadata"}
+    if not metadata.intersection(config):
         return config
-    return {key: value for key, value in config.items() if key != "model_type"}
+    return {key: value for key, value in config.items() if key not in metadata}
 
 
 def _adapter(config, supplied=None):
@@ -886,47 +887,88 @@ def _initialize(config, binding, materials):
     return verified
 
 
-def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
-    """Execute each configuration in declared order, concurrently across configs."""
-    config, plan, binding, materials, offline = _load(config_path, adapter)
-    _auth(config, plan, binding, len(materials))
-    credentials = {}
-    for material in materials:
-        config_id = material["request"]["config_id"]
-        if config_id not in credentials:
-            try:
-                credentials[config_id] = material["runtime"].credential(api_key)
-            except ValueError as exc:
-                raise BenchmarkError(str(exc)) from exc
-    verified = _initialize(config, binding, materials)
-    for material in materials:
-        _record_subscription_block(verified, material,
-                                   _observation(verified, material["request"]["request_id"]))
-    if (_configured_admission_block(verified, config) or _aggregate_freeze(verified, config)
-            or _control(verified) != "running"):
-        result = status(config_path, adapter=adapter)
-        result["errors"] = []
-        return result
-    _reclaim_interrupted_preintent_claims(verified)
-    by_config = {}
-    for material in materials:
-        by_config.setdefault(material["request"]["config_id"], []).append(material)
-    refs = {}
-    errors = []
-    provider_limits = config["provider_limits"]
-    active_provider = {key: 0 for key in provider_limits}
-    future_info = {}
-    claim_by_future = {}
-    held_claims = {}
+def _loaded_group(config_path, *, adapter=None):
+    config, plan, binding, materials, _ = _load(config_path, adapter)
+    return {"config_path": str(Path(config_path).resolve()), "adapter": adapter,
+            "config": config, "plan": plan, "binding": binding,
+            "materials": materials, "errors": []}
 
-    def provider_for(material):
-        value = material["adapter"].provider
-        if value not in provider_limits:
-            raise BenchmarkError(f"missing provider limit for {value}")
-        return value
+
+def _validate_schedule(groups, max_concurrency, provider_limits, *, managed=False):
+    """Reject incompatible frozen controls and identities before admitting work."""
+    if (type(max_concurrency) is not int or max_concurrency < 1 or
+            not isinstance(provider_limits, dict) or not provider_limits or
+            any(not isinstance(key, str) or not key or type(value) is not int or value < 1
+                for key, value in provider_limits.items())):
+        raise BenchmarkError("invalid shared concurrency or provider limits")
+    first = groups[0]["config"]
+    scopes, allocation_ids, config_ids = set(), set(), set()
+    for group in groups:
+        config = group["config"]
+        if managed:
+            if config["schema_version"] != 2:
+                raise BenchmarkError("run groups require managed version-2 configurations")
+            if Path(config["database"]).resolve() != Path(first["database"]).resolve():
+                raise BenchmarkError("run groups must share one authoritative database")
+            if Path(config["artifacts"]).resolve() != Path(first["artifacts"]).resolve():
+                raise BenchmarkError("run groups must share one artifact store")
+            if config["aggregate"]["phase"] != first["aggregate"]["phase"]:
+                raise BenchmarkError("run groups must share the same managed phase")
+            if config["on_budget_exhausted"] != first["on_budget_exhausted"]:
+                raise BenchmarkError("run groups must share one exhaustion policy")
+            if config["scope"] in scopes:
+                raise BenchmarkError("run groups require distinct scopes")
+            allocation_id = config["aggregate"]["allocation_id"]
+            if allocation_id in allocation_ids:
+                raise BenchmarkError("run groups require distinct allocation IDs")
+            allocation_ids.add(allocation_id)
+            scopes.add(config["scope"])
+        if config["max_concurrency"] != max_concurrency:
+            raise BenchmarkError("frozen group concurrency differs from the shared concurrency")
+        if config["provider_limits"] != provider_limits:
+            raise BenchmarkError("frozen group provider limits differ from the shared provider limits")
+        for cfg in group["plan"]["experiment"]["configs"]:
+            if cfg["id"] in config_ids:
+                raise BenchmarkError("run groups require distinct configuration IDs")
+            config_ids.add(cfg["id"])
+        for material in group["materials"]:
+            if (not isinstance(material["adapter"], UnsupportedAdapter) and
+                    material["adapter"].provider not in provider_limits):
+                raise BenchmarkError(f"missing provider limit for {material['adapter'].provider}")
+
+
+def _run_loaded(groups, *, max_concurrency, provider_limits, api_key=None, worker=None):
+    """Schedule every group on one pool, retaining each scope's admission authority."""
+    # Validate every group's authority before any credential lookup or initialization.
+    for group in groups:
+        _auth(group["config"], group["plan"], group["binding"], len(group["materials"]))
+    credentials = {}
+    for group in groups:
+        group["verified"] = _initialize(group["config"], group["binding"], group["materials"])
+        for material in group["materials"]:
+            _record_subscription_block(group["verified"], material,
+                _observation(group["verified"], material["request"]["request_id"]))
+    # The single database lock proves that all previous matrix workers are gone.
+    _reclaim_interrupted_preintent_claims(groups[0]["verified"])
+    by_config, group_by_config = {}, {}
+    for group in groups:
+        for material in group["materials"]:
+            config_id = material["request"]["config_id"]
+            by_config.setdefault(config_id, []).append(material)
+            group_by_config[config_id] = group
+    refs, future_info, claim_by_future, held_claims = {}, {}, {}, {}
+    recovery_objects = max(10000, 8 * sum(len(group["materials"]) for group in groups) + 32)
+    active_provider = {key: 0 for key in provider_limits}
+
+    def blocked(group):
+        verified, config = group["verified"], group["config"]
+        return (_configured_admission_block(verified, config) or
+                _aggregate_freeze(verified, config) or _control(verified) != "running")
 
     def next_material(config_id):
-        if _configured_admission_block(verified, config):
+        group = group_by_config[config_id]
+        verified = group["verified"]
+        if blocked(group):
             return None
         for material in by_config[config_id]:
             if isinstance(material["adapter"], UnsupportedAdapter):
@@ -934,52 +976,78 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
             request_id = material["request"]["request_id"]
             with verified.execution.coordinator._transaction() as conn:
                 exists = conn.execute("SELECT 1 FROM execution_requests WHERE request_id=?", (request_id,)).fetchone()
-            if exists is None:
-                refs[request_id] = _refs(verified, material)
-                return material
             refs[request_id] = _refs(verified, material)
+            if exists is None:
+                return material
             state = verified.execution.get(request_id)["request"]["state"]
             if state in ("response_saved", "not_sent", "reconciled"):
                 continue
             if state in ("dispatch_intent", "outcome_unknown"):
-                _recover_one(verified, material, max_objects=max(10000, 8 * len(materials) + 32))
+                _recover_one(verified, material, max_objects=recovery_objects)
                 state = verified.execution.get(request_id)["request"]["state"]
                 if state in ("response_saved", "not_sent", "reconciled"):
                     continue
             return material
         return None
 
+    def remaining(group):
+        return group["verified"].execution.budget.balances(group["config"]["scope"])["remaining"]
+
+    def submit(pool, material, claim):
+        config_id = material["request"]["config_id"]
+        group = group_by_config[config_id]
+        provider = material["adapter"].provider
+        active_provider[provider] += 1
+        future = pool.submit(_execute_one, group["config"], material, group["verified"], claim,
+                             refs[claim["request_id"]], credentials[config_id], worker)
+        future_info[future] = (config_id, provider)
+        claim_by_future[future] = claim
+
     pending = {config_id: next_material(config_id) for config_id in by_config}
-    worker_count = min(config["max_concurrency"], len(by_config))
+    for config_id, material in pending.items():
+        group = group_by_config[config_id]
+        if (material is None or blocked(group) or
+                remaining(group) < material["prepared"].reserve_microusd or
+                group["verified"].execution.get(material["request"]["request_id"])["request"]["state"]
+                not in ("ready", "claimed")):
+            continue
+        try:
+            credentials[config_id] = material["runtime"].credential(api_key)
+        except ValueError as exc:
+            raise BenchmarkError(str(exc)) from exc
+    worker_count = min(max_concurrency, len(by_config))
     with ThreadPoolExecutor(max_workers=worker_count) as pool:
         while True:
-            if _configured_admission_block(verified, config):
-                for _, claim in held_claims.values():
-                    _release_claim(verified, claim)
-                held_claims.clear()
-                pending = {config_id: None for config_id in pending}
-            for request_id, (selected, claim) in list(held_claims.items()):
+            for group in groups:
+                if not blocked(group):
+                    continue
+                for request_id, (material, claim) in list(held_claims.items()):
+                    if group_by_config[material["request"]["config_id"]] is group:
+                        _release_claim(group["verified"], claim)
+                        del held_claims[request_id]
+                for config_id in pending:
+                    if group_by_config[config_id] is group:
+                        pending[config_id] = None
+            for request_id, (material, claim) in list(held_claims.items()):
                 if len(future_info) >= worker_count:
                     break
-                selected_provider = provider_for(selected)
-                remaining = BudgetLedger(config["database"]).balances(config["scope"])["remaining"]
-                if (active_provider[selected_provider] >= provider_limits[selected_provider] or
-                        remaining < selected["prepared"].reserve_microusd):
+                group = group_by_config[material["request"]["config_id"]]
+                provider = material["adapter"].provider
+                if (active_provider[provider] >= provider_limits[provider] or
+                        remaining(group) < material["prepared"].reserve_microusd):
                     continue
-                active_provider[selected_provider] += 1
-                future = pool.submit(_execute_one, config, selected, verified, claim,
-                                     refs[request_id], credentials[selected["request"]["config_id"]], worker)
-                future_info[future] = (selected["request"]["config_id"], selected_provider)
-                claim_by_future[future] = claim
+                submit(pool, material, claim)
                 del held_claims[request_id]
             for config_id, material in list(pending.items()):
                 if len(future_info) >= worker_count:
                     break
                 if material is None or any(info[0] == config_id for info in future_info.values()):
                     continue
-                provider = provider_for(material)
+                provider = material["adapter"].provider
                 if active_provider[provider] >= provider_limits[provider]:
                     continue
+                group = group_by_config[config_id]
+                verified = group["verified"]
                 state = verified.execution.get(material["request"]["request_id"])["request"]["state"]
                 if state not in ("ready", "claimed"):
                     pending[config_id] = None
@@ -988,73 +1056,99 @@ def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
                                                  request_id=material["request"]["request_id"])
                 if claim is None:
                     continue
-                selected = next((x for x in materials if x["request"]["request_id"] == claim["request_id"]), None)
-                if selected is None:
-                    raise BenchmarkError("claimed request outside bound matrix")
-                selected_config = selected["request"]["config_id"]
-                selected_provider = provider_for(selected)
-                remaining = BudgetLedger(config["database"]).balances(config["scope"])["remaining"]
-                if (active_provider[selected_provider] >= provider_limits[selected_provider] or
-                        remaining < selected["prepared"].reserve_microusd):
-                    held_claims[claim["request_id"]] = (selected, claim)
-                    pending[selected_config] = None
+                if remaining(group) < material["prepared"].reserve_microusd:
+                    held_claims[claim["request_id"]] = (material, claim)
+                else:
+                    submit(pool, material, claim)
+                pending[config_id] = None
+            # Apply a unit's policy as soon as its admitted workers have drained,
+            # even while independent groups still have in-flight work.
+            for group in groups:
+                if blocked(group) or any(group_by_config[info[0]] is group for info in future_info.values()):
                     continue
-                active_provider[selected_provider] += 1
-                future = pool.submit(_execute_one, config, selected, verified, claim,
-                                     refs[claim["request_id"]], credentials[selected_config], worker)
-                future_info[future] = (selected_config, selected_provider)
-                claim_by_future[future] = claim
-                pending[selected_config] = None
+                incomplete = [material for config_id, material in pending.items()
+                              if material is not None and group_by_config[config_id] is group]
+                incomplete.extend(material for material, _ in held_claims.values()
+                                  if group_by_config[material["request"]["config_id"]] is group)
+                if not incomplete:
+                    continue
+                balance = group["verified"].execution.budget.balances(group["config"]["scope"])
+                if balance["frozen"] or all(material["prepared"].reserve_microusd > balance["remaining"]
+                                           for material in incomplete):
+                    for request_id, (material, claim) in list(held_claims.items()):
+                        config_id = material["request"]["config_id"]
+                        if group_by_config[config_id] is group:
+                            _release_claim(group["verified"], claim)
+                            pending[config_id] = material
+                            del held_claims[request_id]
+                    _set_control(group["verified"], "paused_budget" if
+                                 group["config"]["on_budget_exhausted"] == "pause" else "stopped_budget",
+                                 f"remaining={balance['remaining']}; pending={len(incomplete)}",
+                                 budget_scope=group["config"]["scope"])
             if not future_info:
-                if held_claims:
-                    for selected, claim in held_claims.values():
-                        _release_claim(verified, claim)
-                        pending[selected["request"]["config_id"]] = selected
-                    held_claims.clear()
-                incomplete = [material for material in pending.values() if material is not None]
-                if incomplete:
-                    balance = BudgetLedger(config["database"]).balances(config["scope"])
-                    remaining = balance["remaining"]
-                    if balance["frozen"] or all(material["prepared"].reserve_microusd > remaining
-                                               for material in incomplete):
-                        _set_control(verified, "paused_budget" if
-                                     config["on_budget_exhausted"] == "pause" else "stopped_budget",
-                                     f"remaining={remaining}; pending={len(incomplete)}",
-                                     budget_scope=config["scope"])
+                for material, claim in held_claims.values():
+                    _release_claim(group_by_config[material["request"]["config_id"]]["verified"], claim)
+                held_claims.clear()
                 break
             done, _ = wait(future_info, return_when=FIRST_COMPLETED)
             for future in done:
                 config_id, provider = future_info.pop(future)
                 active_provider[provider] -= 1
+                group = group_by_config[config_id]
+                verified = group["verified"]
+                claim = claim_by_future.pop(future)
                 failed = False
                 try:
                     future.result()
                 except BudgetError as exc:
-                    _release_claim(verified, claim_by_future.pop(future))
-                    errors.append({"config_id": config_id, "error": f"BudgetError: {exc}"})
+                    _release_claim(verified, claim)
+                    group["errors"].append({"config_id": config_id, "error": f"BudgetError: {exc}"})
                 except Exception as exc:
-                    claim = claim_by_future.pop(future)
                     if _release_claim(verified, claim):
                         _record_preflight_error(verified, claim["request_id"], type(exc).__name__)
-                    errors.append({"config_id": config_id, "error": f"{type(exc).__name__}: {exc}"})
+                    group["errors"].append({"config_id": config_id, "error": f"{type(exc).__name__}: {exc}"})
                     failed = True
-                else:
-                    claim_by_future.pop(future)
                 next_item = next_material(config_id)
-                if (failed and next_item is not None and
-                        next_item["request"]["request_id"] == claim["request_id"]):
-                    pending[config_id] = None
-                else:
-                    pending[config_id] = next_item
-    result = status(config_path, adapter=adapter)
-    result["errors"] = errors
-    return result
+                pending[config_id] = (None if failed and next_item is not None and
+                    next_item["request"]["request_id"] == claim["request_id"] else next_item)
+    results = []
+    for group in groups:
+        result = status(group["config_path"], adapter=group["adapter"])
+        result["errors"] = group["errors"]
+        results.append(result)
+    return results
+
+
+def _run_unlocked(config_path, *, adapter=None, api_key=None, worker=None):
+    group = _loaded_group(config_path, adapter=adapter)
+    config = group["config"]
+    _validate_schedule([group], config["max_concurrency"], config["provider_limits"])
+    return _run_loaded([group], max_concurrency=config["max_concurrency"],
+                       provider_limits=config["provider_limits"], api_key=api_key, worker=worker)[0]
 
 
 def run(config_path, *, adapter=None, api_key=None, worker=None):
-    config, _, _, _, _ = _load(config_path, adapter)
-    with _runner_lock(config["database"]):
-        return _run_unlocked(config_path, adapter=adapter, api_key=api_key, worker=worker)
+    group = _loaded_group(config_path, adapter=adapter)
+    config = group["config"]
+    _validate_schedule([group], config["max_concurrency"], config["provider_limits"])
+    with _runner_lock(Path(config["database"]).resolve()):
+        return _run_loaded([group], max_concurrency=config["max_concurrency"],
+                           provider_limits=config["provider_limits"], api_key=api_key, worker=worker)[0]
+
+
+def run_groups(config_paths, *, max_concurrency, provider_limits, api_key=None, worker=None):
+    """Run ordered managed groups concurrently under one database runner lock."""
+    if isinstance(config_paths, (str, bytes, Path)):
+        raise BenchmarkError("config_paths must be a nonempty sequence of configuration paths")
+    paths = list(config_paths)
+    if not paths:
+        raise BenchmarkError("config_paths must be a nonempty sequence of configuration paths")
+    groups = [_loaded_group(path) for path in paths]
+    _validate_schedule(groups, max_concurrency, provider_limits, managed=True)
+    with _runner_lock(Path(groups[0]["config"]["database"]).resolve()):
+        results = _run_loaded(groups, max_concurrency=max_concurrency,
+                              provider_limits=provider_limits, api_key=api_key, worker=worker)
+    return [{**result, "config_path": group["config_path"]} for group, result in zip(groups, results)]
 
 
 def status(config_path, *, adapter=None):

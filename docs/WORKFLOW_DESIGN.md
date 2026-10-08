@@ -1,0 +1,37 @@
+# One operator workflow
+
+This implementation extends the approved [goal](NEXT_TASK_GOAL.md), existing [runner](RUNNER.md) and [managed budgets](AGGREGATE_BUDGET.md). One user specification freezes smoke/full membership and controls. It prepares ordinary version-2 runner configurations grouped by accounting unit, and a shared scheduler executes those groups concurrently under one runner lock and common concurrency limits. It does not create a model-specific controller or equate request capacity with dollars.
+
+## Frozen preparation
+
+`workflow.prepare(spec_path, directory)` writes a new private directory and returns a manifest. The specification has exactly `schema_version: 1`, `name`, `task`, `experiment`, `inputs`, `budgets`, `phases`, `max_concurrency`, `provider_limits`, and `authorization_source`. The three source paths resolve relative to the specification. References are not accepted by this contract.
+
+`budgets` maps each used accounting unit (`USD`, `REQ`, or offline `SYN`) to a positive integer aggregate cap. Scales are fixed by the existing runtime contract. `phases` contains exactly `smoke` and `full`. Each phase has `selection`, `caps`, `on_budget_exhausted`, and optional `repeats`. Selection is exactly one of `{"all":true}`, `{"first":N}`, or `{"ids":[...]}`. Counts and IDs must be valid, nonempty and within the supplied inputs; explicit IDs define their ordered membership. Caps map the same accounting units to positive child caps. Both phase allocations must fit every aggregate cap. Repeats default to the supplied experiment. Existing prompt, model, reasoning and batch controls stay in that experiment.
+
+Preparation retains original source bytes and creates frozen per-phase inputs and experiments. Within a phase, all routes use identical membership and prompt/repeat/batch conditions. Runtime accounting units determine groups; provider/model names do not. Unsupported adapter configurations remain visible as unsupported work in the offline SYN group. Invalid registered adapter controls fail preparation with an actionable error. No discovery, credential read or inference is part of preparation.
+
+The directory contains `workflow.json`, frozen `sources/`, per-phase plan/input/experiment artifacts, `runs/` with ordinary v2 configurations, and aggregate specifications. Every output is private and exclusive. The future authoritative database is `execution.sqlite` and raw evidence store is `artifacts/` inside this directory. Preparation creates neither database nor provider authorization. Validation verifies exact source/derived hashes, paths and bindings; original source files need not remain available after freezing. Loading never silently regenerates changed data.
+
+The manifest includes `schema_version`, `kind: "classification_workflow"`, `name`, `workflow_sha256`, common database/artifact locations, original specification and source hashes, concurrency/provider limits, aggregate specifications, and phases. Each phase records its plan/input/experiment paths and hashes, planned request/position counts, and its ordered run groups. Each group records unit, scope, config path, run hash, plan hash, request count and cap. Internal paths are contained in the prepared directory. Workflow identity binds the frozen content and derived run identities; verification excludes only the identity field from its own digest.
+
+## Execution and authorization
+
+Existing `preview`, `preflight`, `run`, `status`, `recover`, `export`, and `report` commands gain mutually exclusive `--workflow` and `--config` inputs. Execution uses explicit `--phase smoke|full`; preparing or running smoke does not dispatch full. Workflow status/preview may include both phases. The existing config interface remains compatible.
+
+For live work, a separately supplied authorization binds `schema_version: 1`, `workflow_sha256`, the selected `phase`, exact phase request count, and its unit-to-cap mapping. Validation of that authorization permits writing the corresponding ordinary child authorization files. These files derive authority from that exact record, rather than preparation inventing permission. Synthetic-only execution requires no provider authorization. Existing runtime preflight, account guards and isolation remain mandatory.
+
+Aggregate terms are initialized before run-group allocation. A single shared scheduler accepts the selected phase's config paths, holds the common database runner lock, enforces total and per-provider concurrency across all units, and uses each group's verified identity, budget scope and account guard for admission. A blocked group retains its cause while independent eligible work can proceed. A phase's unit components expose separate pause/stop states; monetary amounts are never added to request counts. All groups share the same phase exhaustion policy. Unknown work is not replayed. Automatic top-ups remain unsupported.
+
+The internal scheduler API is `benchmark.run_groups(config_paths, *, max_concurrency, provider_limits, api_key=None, worker=None)`. It returns ordered ordinary per-group status objects, with a `config_path` for each. It rejects distinct databases, incompatible managed phases, duplicate scopes/configuration IDs, and inconsistent provider limits before any dispatch. Individual `run` calls reuse the same scheduling implementation. Unit-specific runtime configuration remains internal to preparation.
+
+## Evaluation and reporting
+
+`workflow.load(path)` verifies and returns the manifest. Its `phases[name]["runs"]` records expose `config_path`; the same phase has `plan_path`, `task_path`, and frozen `inputs_path` and `experiment_path`. All paths returned by load are absolute verified paths.
+
+Offline report composition reads all selected phase groups under one runner lock and joins them against the independently frozen whole-phase plan. Config IDs and logical request IDs are unchanged by unit grouping. Every planned request must occur exactly once; duplicate, missing or mismatched group coverage rejects composition. Predictions keep their original configuration/prompt/repeat/case keys. Each operation retains its own accounting unit, storage identity, receipts and lifecycle evidence.
+
+Each phase therefore supports the existing deterministic deep analysis, comparisons, report and presentation across providers. The combined local report adds a phase selector and immutable whole-workflow planned/outcome totals. It discloses selected phase scope and keeps smoke/full metrics separate when their memberships or repeats differ. It does not manufacture unsent positions by taking a cross-phase Cartesian product. References are opened only by the offline evaluator/report path, validated against the full input source and explicitly projected to selected phase membership.
+
+## Verification
+
+Prove deterministic freezing, tamper rejection, membership/order, exact budget vectors and absence of reference/credential access. Use fake USD and REQ runtimes to prove actual overlapping dispatch respects one global/provider concurrency limit, cumulative exhaustion, restart/recovery and retained ambiguous holds. Demonstrate both fictional recruitment and unrelated tasks through CLI preparation, smoke, full, status, export and report. Preserve legacy tests, report denominators and accounting distinctions. Source, budget/recovery and report composition receive independent review. Live and rendered acceptance remain separate gates.

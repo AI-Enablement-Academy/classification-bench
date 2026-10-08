@@ -13,6 +13,7 @@ from html import escape
 import json
 
 from .core import ValidationError, _digest
+from .model_metadata import export_model_metadata
 
 
 _COUNTS = ("planned", "valid", "invalid", "missing", "full_reference", "partial_reference",
@@ -121,6 +122,8 @@ and operation strings are not copied even when their parent object is supplied.
                     "counts": _numbers(run["counts"], _COUNTS), "cost": _numbers(run["cost"], _COST), "cases": cases}
             if private:
                 item.update(config_id=run["config_id"], prompt_id=run["prompt_id"], model=run["model"])
+            if "model_metadata" in run.get("configuration", {}):
+                item["model_metadata"] = export_model_metadata(run["configuration"], private=private)
             if field_metrics is not None:
                 item["field_metrics"] = [field_stats(value, index, detailed=True) for index, value in
                                          enumerate(field_metrics["runs"][run["run_id"]]["fields"])]

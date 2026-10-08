@@ -1,5 +1,17 @@
 # Implementation status: 2026-10-08
 
+## Frozen smoke/full workflow and model declarations
+
+[One workflow specification](WORKFLOW.md) now freezes source inputs, smoke/full selections and repeats, separate USD/REQ/SYN aggregate and phase caps, exhaustion policy and shared provider/concurrency controls. Preparation creates no execution database, credentials or live authorization. Selected-phase execution verifies separate exact approval before deriving child authorization records; the shared scheduler preserves independent accounting, account guards, blocked causes and ambiguous holds.
+
+Combined reports verify exact group coverage against each frozen phase plan under one runner lock. References are opened offline and validated against the complete frozen input source before projection. Whole-workflow planned/outcome counts include every scheduled repetition, while analysis, accuracy and comparisons remain scoped to the selected phase. Portable local links retain phase plus detailed selection; standalone phase downloads retain their own workflow/phase provenance.
+
+[Explicit model metadata](MODEL_METADATA.md) separates family, declared purpose and sourced training lineage. Unknowns stay explicit, operator verification is labeled as a declaration, and no architecture or causal conclusions are inferred from model names. Metadata enters plan identity and allowlisted report outputs, while strict execution adapters receive only their supported controls. Omitted metadata retains historical request identities.
+
+Final `python3 -m unittest discover -s tests -v`: **624 tests pass in 98.014 seconds, no skips**, exit 0 (`/tmp/classification-workflow-final-20261008.log`). Independent scoped reviews returned **APPROVE** after the reproduced blockers were fixed. A fresh installed package passed 28 CLI commands across both fictional examples; its final source hashes matched the repository. Two final private combined reports passed all 34 JavaScript and 26 JSON script checks. The seven new DOM tests explicitly disclose their iframe/history/download harness limits.
+
+Verification and the remaining acceptance gates are recorded in [workflow acceptance](WORKFLOW_ACCEPTANCE_20261008.md). The repository stays private. Apache-2.0 remains the provisional public-release preference, with MIT an alternative; publication follows completion, license selection and the history/data/redistribution audit.
+
 ## Aggregate accounting, account checks and OpenRouter controls
 
 [Aggregate accounting](AGGREGATE_BUDGET.md) now reserves whole smoke/full child caps in one authoritative database, preserves separate allocations/charges/reservations/unknown holds, and propagates committed overruns and execution safety blocks to siblings. Version-2 runner configurations retain logical provider IDs while using run-qualified SQLite identities, so overlapping smoke/full inputs do not collide. The aggregate CLI supports creation, status during an active run and exact-specification-bound cap amendments. Parent blocks and freezes remain visible before child allocation and do not consume pause/stop controls.
@@ -14,7 +26,7 @@ Final `python3 -m unittest discover -s tests -v`: **559 tests pass in 101.531 se
 
 Two **RESIDUAL** limitations remain documented: a proven local guard expiry after durable intent uses the conservative unknown-outcome path and retains invocation capacity; pending historical raw recovery across changed implementation hashes requires the original verified parser build, preserving its evidence/reservation without replay. Neither permits extra dispatch or silently releases exposure.
 
-The expanded goal remains active. Automatic smoke/full selection, mixed-unit scheduling, shared provider concurrency, combined report composition and distinct model metadata still need implementation. Current-route live acceptance, clean-install independent operation and exact rendered report/presentation acceptance remain separate gates. The repository remains private; the Apache-2.0/MIT public-release milestone follows completion and the release audit.
+At this earlier checkpoint, automatic phase selection, mixed-unit scheduling, combined reports and distinct model metadata were pending; the workflow checkpoint above supersedes those implementation gaps. The expanded goal remains active. Current-route live acceptance, clean-install independent operation and exact rendered report/presentation acceptance remain separate gates. The repository remains private; the Apache-2.0/MIT public-release milestone follows completion and the release audit.
 
 ## Repeat analysis and operator reproduction, 2026-10-08
 

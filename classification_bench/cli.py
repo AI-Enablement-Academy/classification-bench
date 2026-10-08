@@ -44,6 +44,10 @@ def main(argv=None):
     imported.add_argument("--directory", required=True)
     validated = sub.add_parser("validate", help="Verify an imported task package and its frozen source bindings")
     validated.add_argument("--directory", required=True)
+    prepared = sub.add_parser("workflow-prepare", help="Freeze smoke/full membership, budgets and execution controls without inference")
+    prepared.add_argument("--spec", required=True)
+    prepared.add_argument("--directory", required=True)
+    prepared.add_argument("--out", default="-")
     plan = sub.add_parser("plan", help="Build deterministic requests without reference labels")
     plan.add_argument("--task", required=True)
     plan.add_argument("--experiment", required=True)
@@ -82,10 +86,18 @@ def main(argv=None):
         ("export", "Export verified predictions for private offline scoring"),
     ):
         child = sub.add_parser(command, help=help_text)
-        child.add_argument("--config", required=True)
+        source = child.add_mutually_exclusive_group(required=True)
+        source.add_argument("--config")
+        source.add_argument("--workflow", help="Frozen workflow.json")
+        child.add_argument("--phase", choices=("smoke", "full"))
+        if command == "run":
+            child.add_argument("--authorization", help="Explicit authorization for the selected live workflow phase")
         child.add_argument("--out", default="-")
     report = sub.add_parser("report", help="Write a private local HTML report from verified saved evidence")
-    report.add_argument("--config", required=True)
+    report_source = report.add_mutually_exclusive_group(required=True)
+    report_source.add_argument("--config")
+    report_source.add_argument("--workflow", help="Frozen workflow.json; omit --phase to show both phases")
+    report.add_argument("--phase", choices=("smoke", "full"))
     report.add_argument("--labels", help="Optional offline references; never passed to the runner")
     report.add_argument("--allow-partial-references", action="store_true",
                         help="Show known-reference scores separately from the full planned denominator")
@@ -118,6 +130,9 @@ def main(argv=None):
             aggregate.add_argument("--authorization", required=True)
     args = parser.parse_args(argv)
     try:
+        if getattr(args, "config", None) and (getattr(args, "phase", None) or
+                (args.command == "run" and getattr(args, "authorization", None))):
+            raise ValidationError("--phase and run --authorization require --workflow; ordinary configs retain their frozen authorization_file")
         if args.command == "init":
             from .task_setup import initialize_task, read_specification
             output = initialize_task(args.directory, read_specification(args.spec),
@@ -128,6 +143,9 @@ def main(argv=None):
         elif args.command == "validate":
             from .task_setup import validate_setup
             output = validate_setup(args.directory)
+        elif args.command == "workflow-prepare":
+            from .workflow import prepare
+            output = prepare(args.spec, args.directory)
         elif args.command == "plan":
             output = build_plan(_read(args.task), _read(args.experiment), _read(args.inputs))
         elif args.command == "evaluate":
@@ -173,8 +191,20 @@ def main(argv=None):
             from .benchmark import report_snapshot
             from .report import generate_report
             # Verified export is performed before the evaluator opens references.
-            snapshot = report_snapshot(args.config)
-            html = generate_report(snapshot["task"], snapshot["plan"],
+            if args.workflow:
+                from .workflow_execution import report_snapshot as workflow_snapshot
+                from .workflow_report import generate_workflow_report
+                if args.phase is None and (args.scenarios or args.cohorts or args.repeat_origins):
+                    raise ValidationError("select --phase when supplying phase-specific scenarios, cohorts or repeat origins")
+                snapshot = workflow_snapshot(args.workflow, phase=args.phase)
+                html = generate_workflow_report(snapshot, _read(args.labels) if args.labels else None,
+                                   allow_partial_references=args.allow_partial_references,
+                                   scenarios=_read(args.scenarios) if args.scenarios else None,
+                                   cohort_declarations=_read(args.cohorts) if args.cohorts else None,
+                                   repeat_origins=_read(args.repeat_origins) if args.repeat_origins else None)
+            else:
+                snapshot = report_snapshot(args.config)
+                html = generate_report(snapshot["task"], snapshot["plan"],
                                    _read(args.labels) if args.labels else None,
                                    snapshot["predictions"], snapshot["operations"],
                                    allow_partial_references=args.allow_partial_references,
@@ -186,11 +216,15 @@ def main(argv=None):
             _write("-", output)
             return
         else:
-            from . import benchmark
-            operation = {"preflight": benchmark.preflight, "preview": benchmark.preview, "run": benchmark.run,
-                         "status": benchmark.status, "recover": benchmark.recover,
-                         "export": benchmark.export_predictions}[args.command]
-            output = operation(args.config)
+            from . import benchmark, workflow_execution
+            module = workflow_execution if args.workflow else benchmark
+            operation = {"preflight": module.preflight, "preview": module.preview, "run": module.run,
+                         "status": module.status, "recover": module.recover,
+                         "export": module.export_predictions}[args.command]
+            options = {"phase": args.phase} if args.workflow else {}
+            if args.workflow and args.command == "run":
+                options["authorization_path"] = args.authorization
+            output = operation(args.workflow or args.config, **options)
         _write(getattr(args, "out", "-"), output)
     except (OSError, json.JSONDecodeError, ValidationError, TypeError, ValueError,
             IsolationError, IsolationUnavailable) as exc:

@@ -11,6 +11,7 @@ from html import escape
 from urllib.parse import urlencode
 
 from .report_findings import evidence_url
+from .model_metadata import render_model_metadata
 
 
 PREVIEW_LIMIT = 6
@@ -209,6 +210,20 @@ def render_presentation(analysis, findings, *, sensitivity=None, field_metrics=N
         _reveal("<h4>Evidence-backed findings</h4><ul class='presentation-findings-index'>" + overview_links + "</ul>"
                 "<p class='presentation-note'>Open a category to read its first finding, then choose any scoped finding. "
                 "Category counts are not pooled performance scores.</p>"))
+    if any("model_metadata" in run.get("configuration", {}) for run in runs):
+        by_configuration = {}
+        for run in runs:
+            by_configuration.setdefault(run["config_id"], run)
+        declaration_runs = sorted(by_configuration.values(),
+                                  key=lambda run: "model_metadata" not in run.get("configuration", {}))
+        add("model-declarations", "Keep declared model context separate from measured results",
+            "<p class='presentation-lede'>Family, intended purpose and training lineage are separate operator declarations. "
+            "A reporting group, route or interface does not verify any of them.</p>" +
+            "".join("<div>" + _link(run["run_id"], _run_label(run)) +
+                    render_model_metadata(run.get("configuration", {}), heading="Read model declarations and sources") + "</div>"
+                    for run in declaration_runs[:PREVIEW_LIMIT]) + _preview_note(len(declaration_runs), "configurations") +
+            "<p class='presentation-note'>Source review is operator-declared. The harness has not independently verified the claims, "
+            "and they do not explain observed performance causally. Inspect any exact run in the case explorer for its complete declarations.</p>")
     coverage_rows = [[_link(run["run_id"], _run_label(run)),
         _h(f"{run['counts']['valid']}/{run['counts']['planned']}"), _h(run["counts"]["invalid"]),
         _h(run["counts"]["missing"]), _h(f"{run['counts']['full_reference']}/{run['counts']['planned']}"),
@@ -400,6 +415,7 @@ _STYLE = """<style>
 .report-presentation :is(td,th){padding:.65rem .6rem;border-bottom:1px solid var(--presentation-line);vertical-align:top;text-align:right}.report-presentation th:first-child{text-align:left;max-width:26rem}.report-presentation thead th{font-weight:650;font-size:.75rem}.report-presentation tbody th{font-weight:500}.report-presentation tbody tr:last-child>*{border-bottom:0}
 .report-presentation .presentation-finding-control{display:grid;gap:.4rem;margin:1rem 0}.report-presentation .presentation-finding-control select{width:100%;max-width:58rem}.report-presentation .presentation-finding h3{font-size:2rem;margin:1.5rem 0 .5rem}
 .report-presentation .presentation-case-links a{display:inline-block;margin:.25rem .65rem .25rem 0}.report-presentation details{margin:1.2rem 0;border-top:1px solid var(--presentation-line);padding-top:.75rem}.report-presentation summary{cursor:pointer;color:var(--presentation-accent);font-size:.85rem;padding:.5rem 0}
+.report-presentation .model-declarations dt{font-weight:650;margin-top:1rem}.report-presentation .model-declarations dd{margin:.3rem 0 1rem;overflow-wrap:anywhere}.report-presentation .model-declarations code,.report-presentation .model-declarations a{overflow-wrap:anywhere}
 .report-presentation .presentation-hashes{font-size:.72rem;display:grid;grid-template-columns:minmax(6rem,auto) minmax(0,1fr);gap:.4rem 1rem;max-width:78rem}.report-presentation .presentation-hashes dt{color:var(--presentation-muted)}.report-presentation .presentation-hashes dd{font-family:ui-monospace,Menlo,monospace;margin:0;overflow-wrap:anywhere}
 .report-presentation #presentation-sources{padding-top:2rem}.report-presentation #presentation-sources>h3{font-size:1.5rem}.report-presentation .presentation-findings-index li{margin:.6rem 0}.report-presentation .presentation-findings-index span{font-size:.85rem;color:var(--presentation-muted)}
 .report-presentation.presentation-active{position:fixed;inset:0;z-index:50;margin:0;overflow:auto;border:0;padding-top:1rem;overscroll-behavior:contain}.report-presentation.presentation-active .presentation-controls{position:sticky;top:0;background:var(--presentation-paper);z-index:1}.report-presentation.presentation-active .presentation-header{max-width:78rem;margin:auto}.report-presentation.presentation-active #presentation-stage{min-height:65dvh}

@@ -7,6 +7,7 @@ pairs and repeated cases are never pooled as independent samples.
 """
 
 from copy import deepcopy
+from .model_metadata import project_model_metadata
 from itertools import combinations
 
 from .core import ValidationError, _digest, validated_positions, validate_reference_labels
@@ -357,6 +358,7 @@ def build_analysis(task, plan, predictions, labels=None, operations=None, *, coh
                 counts["validity_rate"] = counts["valid"] / counts["planned"]
                 runs.append({"run_id": run_id, "config_id": config["id"], "prompt_id": prompt["id"],
                              "repeat": repeat, "model": config["model"], "model_type": config.get("model_type"),
+                             **({"model_metadata": project_model_metadata(config)} if "model_metadata" in config else {}),
                              "configuration": deepcopy(config), "prompt_sha256": _digest(prompt),
                              "configuration_sha256": _digest(config), "task_sha256": sources["task"],
                              "input_sha256": input_hash, "request_ids": request_ids,
