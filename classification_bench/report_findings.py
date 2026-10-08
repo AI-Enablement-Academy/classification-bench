@@ -24,7 +24,7 @@ def evidence_url(run, case=None, compare=None):
     return "#case-explorer-heading?" + urlencode(values)
 
 
-def build_findings(analysis, *, comparative=None):
+def build_findings(analysis, *, comparative=None, repeats=None):
     """Return deterministic observations and explicitly conditional next steps."""
     findings = []
 
@@ -150,6 +150,12 @@ def build_findings(analysis, *, comparative=None):
     if comparative["analysis_id"] != analysis["analysis_id"] or comparative["source_hashes"] != analysis["source_hashes"]:
         raise ValueError("comparative findings must match analysis sources")
     findings.extend(deepcopy(comparative["findings"]))
+    from .report_repeats import build_repeat_analysis, build_repeat_findings
+    if repeats is None:
+        repeats = build_repeat_analysis(analysis)
+    if repeats["analysis_id"] != analysis["analysis_id"] or repeats["source_hashes"] != analysis["source_hashes"]:
+        raise ValueError("repeat findings must match analysis sources")
+    findings.extend(build_repeat_findings(repeats))
     return {"schema_version": 1, "analysis_id": analysis["analysis_id"],
             "source_hashes": deepcopy(analysis["source_hashes"]), "findings": findings,
             "scope": "All planned runs; each finding retains its own cases and denominator.",

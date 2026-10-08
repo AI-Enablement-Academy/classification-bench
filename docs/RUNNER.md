@@ -21,9 +21,12 @@ python3 -m scripts.offline_demo --task product --directory /tmp/product-demo
 
 Each command creates a private run directory, previews and executes 24 synthetic requests across two configurations, two prompts, three repeats and two batches per pass, then writes `report.html`. Each experiment has 36 planned classification positions. The first-label and deliberately invalid outputs test the software; they are not measurements of model quality. No credentials, source-project records or model calls are involved.
 
+The synthetic adapter reserves one SYN unit per active request and settles at zero. Its positive cap limits concurrent reservations, not the cumulative number of requests; this example cannot demonstrate monetary or request-count exhaustion. Smoke and full configurations currently require separate run databases. Their individual caps do not enforce an aggregate experiment cap across databases.
+
 For the generated run, the individual commands are:
 
 ```sh
+python3 -m classification_bench preflight --config /tmp/candidate-demo/config.json
 python3 -m classification_bench preview --config /tmp/candidate-demo/config.json
 python3 -m classification_bench run --config /tmp/candidate-demo/config.json
 python3 -m classification_bench status --config /tmp/candidate-demo/config.json

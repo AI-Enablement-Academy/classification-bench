@@ -92,6 +92,7 @@ def main(argv=None):
     report.add_argument("--out", required=True)
     report.add_argument("--scenarios", help="Optional JSON list of hypothetical reference alternatives")
     report.add_argument("--cohorts", help="Optional JSON list of explicitly declared run cohorts")
+    report.add_argument("--repeat-origins", help="Optional offline JSON list of declared repeat origins; does not verify fresh dispatch")
     catalog = sub.add_parser("catalog", help="Fetch a public endpoint snapshot without credentials or inference")
     catalog.add_argument("--model", required=True)
     catalog.add_argument("--provider", required=True)
@@ -152,7 +153,8 @@ def main(argv=None):
                                    snapshot["predictions"], snapshot["operations"],
                                    allow_partial_references=args.allow_partial_references,
                                    scenarios=_read(args.scenarios) if args.scenarios else None,
-                                   cohort_declarations=_read(args.cohorts) if args.cohorts else None)
+                                   cohort_declarations=_read(args.cohorts) if args.cohorts else None,
+                                   repeat_origins=_read(args.repeat_origins) if args.repeat_origins else None)
             _write_private_html(args.out, html)
             output = {"report": str(Path(args.out).resolve()), "visibility": "private-local"}
             _write("-", output)

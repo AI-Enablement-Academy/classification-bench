@@ -17,6 +17,7 @@ from .report_sensitivity import build_sensitivity, render_sensitivity
 from .report_visuals import agreement_duration_plot
 from .report_filters import render_report_filters
 from .report_comparisons import build_comparative_findings, render_comparative_findings
+from .report_repeats import build_repeat_analysis, render_repeat_analysis
 
 
 def _h(value):
@@ -540,7 +541,7 @@ details{margin-top:1rem}.raw-usage pre{max-height:24rem;overflow:auto;padding:1r
 
 
 def generate_report(task, plan, labels=None, predictions=None, operations=None, *,
-                    allow_partial_references=False, scenarios=None, cohort_declarations=None):
+                    allow_partial_references=False, scenarios=None, cohort_declarations=None, repeat_origins=None):
     """Return a local HTML report. Inputs and references remain in its case details."""
     result = evaluate(task, plan, labels, predictions,
                       allow_partial_references=allow_partial_references)
@@ -1093,7 +1094,9 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
     explorer = render_report_explorer(analysis)
     comparative_data = build_comparative_findings(analysis)
     comparative_panel = render_comparative_findings(comparative_data)
-    finding_data = build_findings(analysis, comparative=comparative_data)
+    repeat_data = build_repeat_analysis(analysis, origin_declarations=repeat_origins)
+    repeat_panel = render_repeat_analysis(repeat_data)
+    finding_data = build_findings(analysis, comparative=comparative_data, repeats=repeat_data)
     deep_findings = render_findings(finding_data)
     sensitivity_data = build_sensitivity(task, plan, predictions, labels, scenarios)
     sensitivity = render_sensitivity(sensitivity_data)
@@ -1135,6 +1138,7 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
             "<nav class='jump-nav' aria-label='Report sections'><div class='shell'><a href='#comparison-heading'>Comparison</a>"
             "<a href='#summary-heading'>Whole experiment</a><a href='#detail-heading'>Pass evidence</a>"
             "<a href='#case-explorer-heading'>Case explorer</a><a href='#deep-findings'>Findings and follow-up</a>"
+            "<a href='#repeat-analysis-heading'>Repeat analysis</a>"
             "<a href='#reference-sensitivity-heading'>Sensitivity</a><a href='#downloads-heading'>Downloads</a>"
             "<a href='#presentation-heading'>Presentation</a>"
             "<a href='#provenance-heading'>Provenance</a></div></nav>"
@@ -1181,7 +1185,7 @@ def generate_report(task, plan, labels=None, predictions=None, operations=None, 
             f"<p id='filter-status' role='status' aria-live='polite'>Showing {sum(len(c['passes']) for c in result['conditions'])} of {sum(len(c['passes']) for c in result['conditions'])} pass sections.</p>"
             "<p id='filter-empty' hidden>No pass sections match these filters. Reset filters to show all passes.</p></section>"
             + "<nav class='detail-index' data-contents aria-label='Report contents'><h2>Contents</h2><ul>" + "".join(contents) + "</ul></nav>"
-            + "".join(pages) + explorer + deep_findings + comparative_panel + sensitivity + downloads + presentation + "</main>"
+            + "".join(pages) + explorer + deep_findings + comparative_panel + repeat_panel + sensitivity + downloads + presentation + "</main>"
             + "<footer class='provenance'><div class='shell'><h2 id='provenance-heading'>Provenance</h2><p>Canonical JSON SHA-256 digests bind the task, plan, references, selected prediction set and any supplied operation records. "
             "The evaluator validates planned positions and predictions; the caller is responsible for verifying operation records. "
             "This file includes private inputs and reference labels. Keep it local.</p>"

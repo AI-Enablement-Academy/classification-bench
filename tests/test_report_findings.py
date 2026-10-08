@@ -63,6 +63,22 @@ class FindingsTests(unittest.TestCase):
         self.assertEqual(repeats[0]["metrics"]["excluded"], 2)
         self.assertEqual(repeats[0]["denominator"], 3)
 
+    def test_repeat_findings_reject_sources_from_another_evaluation(self):
+        from classification_bench.report_repeats import build_repeat_analysis
+        analysis = self.analysis()
+        repeats = build_repeat_analysis(analysis)
+        integrated = build_findings(analysis, repeats=repeats)
+        self.assertEqual(sum(row["kind"] == "repeat_analysis_summary"
+                             for row in integrated["findings"]), 2)
+        changed = copy.deepcopy(repeats)
+        changed["analysis_id"] = "different evaluation"
+        with self.assertRaisesRegex(ValueError, "repeat findings must match"):
+            build_findings(analysis, repeats=changed)
+        changed = copy.deepcopy(repeats)
+        changed["source_hashes"]["unexpected_source"] = "different source"
+        with self.assertRaisesRegex(ValueError, "repeat findings must match"):
+            build_findings(analysis, repeats=changed)
+
     def test_absent_and_partial_references_do_not_imply_whole_accuracy(self):
         unknown = build_findings(self.analysis(None))
         self.assertFalse(any(x["kind"] == "field_errors" for x in unknown["findings"]))

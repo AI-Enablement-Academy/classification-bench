@@ -80,6 +80,7 @@ config = {
 PY
 
 python3 -m classification_bench plan --task "$run_dir/task.json" --experiment "$run_dir/experiment.json" --inputs "$run_dir/inputs.json" --out "$run_dir/plan.json"
+python3 -m classification_bench preflight --config "$run_dir/config.json" --out "$run_dir/preflight.json"
 python3 -m classification_bench preview --config "$run_dir/config.json" --out "$run_dir/preview.json"
 python3 -m classification_bench run --config "$run_dir/config.json" --out "$run_dir/run-result.json"
 python3 -m classification_bench status --config "$run_dir/config.json" --out "$run_dir/status.json"
@@ -117,3 +118,5 @@ After explicit operator authorization for that exact run and cap, create the pri
 ```
 
 The count and cap above are examples, not settings to reuse. The runner compares the whole authorization object with the exact config and plan before dispatch. A changed input, prompt, snapshot or config needs a new preview and authorization. The local file records an operator decision; it does not authenticate the payer. Credential setup and the authorized `run` command are in [RUNNER.md](RUNNER.md); the [smoke plan](LIVE_SMOKE_PLAN.md) shows a fixture-specific live example. This walkthrough performs no live catalog lookup or provider call.
+
+The synthetic adapter reserves one SYN unit per active request and settles at zero. A positive SYN cap therefore bounds active reservations, not cumulative request count. Separate smoke/full databases currently have separate caps; no cross-run aggregate cap is enforced yet. These offline examples do not establish budget-exhaustion acceptance.

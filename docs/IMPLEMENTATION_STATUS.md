@@ -1,4 +1,15 @@
 # Implementation status: 2026-10-08
+
+## Repeat analysis and operator reproduction, 2026-10-08
+
+[Repeat analysis](REPEAT_ANALYSIS.md) now presents all-field/per-field flips, comparable and excluded denominators, original case reasons, whole-repeat agreement/validity ranges and exact A/B evidence. Historical/imported/replay/declared-fresh sources retain their scope and do not establish fresh dispatch. Report and presentation use the same source-bound findings. Optional `report --repeat-origins` declarations affect offline reporting only.
+
+Independent repeat/integration review returned **APPROVE**, with no remaining confirmed BLOCKING or RESIDUAL findings. The reviewer separately verified a 180-position, 40-pair fixture, the real `--repeat-origins` CLI path and generated-report DOM navigation without changing dispatch counts. The final `python3 -m unittest discover -s tests -v` run passed **446 tests in 66.070 seconds, no skips**, exit 0 (`/tmp/classification-repeat-final.log`). Nine fresh [inspection artifacts](REPORT_REPEAT_CHECK.md) passed 72 JavaScript syntax checks, 54 JSON parses, mode-0600 checks and source/artifact hashing. Generation denied socket connections. These are offline fixtures, not provider-performance or rendered-acceptance evidence.
+
+The [generic operator pass](GENERIC_OPERATOR_ACCEPTANCE_20261008.md) completed two unrelated tasks through the documented CLI, preserving 64 one-time synthetic dispatches and all 256 raw artifact hashes across restart/recovery. It does not prove cumulative exhaustion: synthetic charges settle at zero. Documentation now explains that boundary and includes generic preflight commands. [The execution audit](EXECUTION_GAP_AUDIT_20261008.md) identifies aggregate budgets, mixed-unit phase orchestration, account-guard renewal and OpenRouter controls/discovery as remaining implementation work. Current live-route and exact rendered gates remain pending.
+
+The separate private-output checkpoint `4d02424` protects every CLI JSON file with exclusive mode-0600 creation. Independent privacy review returned APPROVE; stdout redirection and historical output permissions remain explicit limits. No provider inference, credential copy or source-project mutation occurred in this increment. Public release remains a post-completion milestone with an unsettled license choice.
+
 ## Shared report scope, case search and controlled comparisons, 2026-10-08
 
 [Shared filters](REPORT_FILTERS.md) now synchronize requested model/group/provider, execution route, output interface, reasoning, prompt, repeat, lifecycle and API route across report controls and views. Matching selects whole runs, preserves full condition metrics and discloses partial scope. [Case search](REPORT_CASE_SEARCH.md) retains selected evidence, planned denominators and local URL state. Ordinary heading/evidence links preserve the rest of that state.
